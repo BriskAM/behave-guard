@@ -14,7 +14,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"verify" | "identify">("verify");
-  const passivePoints = usePassiveMouseCollector();
+  const passivePoints = usePassiveMouseCollector(step === "typing" && !result);
   
   // Selection states
   const [selectedProfile, setSelectedProfile] = useState<string>("");
@@ -152,6 +152,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
     setKeyCount(0);
     dotTrialsRef.current = [];
     dragTrialsRef.current = [];
+    passivePoints.current = [];
     setResult(null);
     setErrorMsg("");
     setStep("typing");

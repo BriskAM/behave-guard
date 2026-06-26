@@ -36,7 +36,7 @@ class BehaveGuardSVM:
         # Higher decision function output = more normal.
         # We negate the decision function so higher = more anomalous.
         raw_scores = -self.svm.decision_function(X_scaled)
-        self.t_anomaly = float(np.percentile(raw_scores, 95))
+        self.t_anomaly = max(float(np.percentile(raw_scores, 95)), 0.05)
         
         self.enrollment_mean = np.mean(X, axis=0)
         self.enrollment_std = np.std(X, axis=0) + 1e-8

@@ -3,11 +3,16 @@
 import { useEffect, useRef } from "react";
 import { MousePoint } from "./types";
 
-export function usePassiveMouseCollector() {
+export function usePassiveMouseCollector(isEnabled: boolean = true) {
   const pointsRef = useRef<MousePoint[]>([]);
   const last = useRef<{ x: number; y: number; ts: number } | null>(null);
 
   useEffect(() => {
+    if (!isEnabled) {
+      last.current = null;
+      return;
+    }
+
     function onMove(e: MouseEvent) {
       const ts = performance.now();
       const x = e.clientX;
@@ -28,7 +33,7 @@ export function usePassiveMouseCollector() {
     }
     window.addEventListener("mousemove", onMove, { passive: true });
     return () => window.removeEventListener("mousemove", onMove);
-  }, []);
+  }, [isEnabled]);
 
   return pointsRef;
 }

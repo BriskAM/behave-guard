@@ -101,7 +101,7 @@ def train_user_models(subject_id: str):
         # Calibrate SVM on validation
         if cal_agg:
             scores = [svm_model.score_window(w)["raw_decision"] for w in cal_agg]
-            svm_model.t_anomaly = float(np.percentile(scores, 95))
+            svm_model.t_anomaly = max(float(np.percentile(scores, 95)), 0.05)
         svm_model.save(subject_dir / "svm.pkl")
 
         # 4. Train LSTM
@@ -144,7 +144,7 @@ def train_user_models(subject_id: str):
             svm_mouse.fit(train_m)
             if cal_m:
                 scores = [svm_mouse.score_window(w)["raw_decision"] for w in cal_m]
-                svm_mouse.t_anomaly = float(np.percentile(scores, 95))
+                svm_mouse.t_anomaly = max(float(np.percentile(scores, 95)), 0.05)
             svm_mouse.save(subject_dir / "svm_mouse.pkl")
             
         # Save mouse task baselines

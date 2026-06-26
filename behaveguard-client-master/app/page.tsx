@@ -17,7 +17,7 @@ import Done from "@/components/Done";
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("landing");
-  const passivePoints = usePassiveMouseCollector();
+  const passivePoints = usePassiveMouseCollector(screen === "keyboard");
   const sessionStart = useRef(performance.now());
 
   const subjectId = useRef("");
