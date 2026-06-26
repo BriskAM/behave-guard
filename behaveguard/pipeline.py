@@ -268,7 +268,7 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
     has_passive_data = False
     if passive_pts and svm_mouse_model.is_trained:
         passive_wins = extract_mouse_kinematic_windows(passive_pts, win_size=30, stride=15)
-        if len(passive_wins) >= 5:
+        if len(passive_wins) >= 30:
             scores = [svm_mouse_model.score_window(w) for w in passive_wins]
             m_session = svm_mouse_model.score_session(scores)
             m_score = m_session["mean_score"]
