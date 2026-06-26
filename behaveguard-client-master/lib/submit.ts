@@ -1,6 +1,6 @@
 import { SessionData } from "./types";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export async function submitSession(data: SessionData): Promise<any> {
   try {
