@@ -373,6 +373,16 @@ def identify_user(candidate_ids: List[str], session_data: Dict[str, Any]) -> Dic
         if "error" in res:
             continue
             
+        print(f"[DEBUG IDENTIFY] Candidate: {cid}")
+        print(f"  Verdict: {res['verdict']}")
+        print(f"  Anomaly Score: {res['anomaly_score']:.4f}")
+        print(f"  Keyboard Score: {res['keyboard_score']:.4f}")
+        print(f"  Mouse Score: {res.get('mouse_score')}")
+        print(f"  Models Breakdown:")
+        for m_name, m_res in res['models'].items():
+            if m_res:
+                print(f"    {m_name}: score={m_res['anomaly_score']:.4f}, verdict={m_res['verdict']}")
+            
         # Match rate / similarity is the inverse of anomaly score
         match_score = max(0.0, 1.0 - res["anomaly_score"])
         scores.append(match_score)

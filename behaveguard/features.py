@@ -24,11 +24,8 @@ COMMON_DIGRAPHS = {
 DIGRAPH_FREQUENCY = {d: 1.0 for d in COMMON_DIGRAPHS}
 
 def encode_time(ts_ms: float) -> tuple[float, float]:
-    """Encode timestamp (in ms) as cyclical time-of-day features."""
-    ts_sec = ts_ms / 1000.0
-    t = time.localtime(ts_sec)
-    fraction = (t.tm_hour * 60 + t.tm_min) / 1440.0
-    return math.sin(2 * math.pi * fraction), math.cos(2 * math.pi * fraction)
+    """Encode timestamp (in ms) as cyclical time-of-day features. (Disabled to avoid scaling explosion)."""
+    return 0.0, 0.0
 
 def key_cat_onehot(category: str) -> list[float]:
     vec = [0.0] * 4
