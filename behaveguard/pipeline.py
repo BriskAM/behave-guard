@@ -380,7 +380,9 @@ def identify_user(candidate_ids: List[str], session_data: Dict[str, Any]) -> Dic
             "subject_id": cid,
             "match_score": match_score,
             "anomaly_score": res["anomaly_score"],
-            "verdict": res["verdict"]
+            "verdict": res["verdict"],
+            "keyboard_score": res.get("keyboard_score"),
+            "mouse_score": res.get("mouse_score")
         })
 
     if not valid_candidates:

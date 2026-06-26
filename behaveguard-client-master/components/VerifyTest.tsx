@@ -382,6 +382,12 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
                               style={{ width: `${c.confidence * 100}%` }}
                             />
                           </div>
+                          {c.mouse_score !== null && c.mouse_score !== undefined && (
+                            <div className="flex gap-4 text-[10px] text-muted font-mono-tight pl-0.5 pt-0.5 pb-1">
+                              <span>Keyboard Match: <strong className="text-amber">{Math.round((1 - c.keyboard_score) * 100)}%</strong></span>
+                              <span>Mouse Match: <strong className="text-cyan">{Math.round((1 - c.mouse_score) * 100)}%</strong></span>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
