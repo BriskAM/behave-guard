@@ -1,9 +1,13 @@
+import sys
+from pathlib import Path
+# Add project root to python path to avoid ModuleNotFoundError
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from pathlib import Path
 from sklearn.decomposition import PCA
 
 from behaveguard.storage import (
