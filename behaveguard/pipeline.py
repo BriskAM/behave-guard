@@ -428,9 +428,42 @@ def identify_user(candidate_ids: List[str], session_data: Dict[str, Any]) -> Dic
     # Sort by confidence descending
     valid_candidates.sort(key=lambda x: x["confidence"], reverse=True)
     best_candidate = valid_candidates[0]
+    identified_subject = best_candidate["subject_id"] if best_candidate["confidence"] > 0.4 else "unknown"
+
+    # Write to a persistent log file
+    log_dir = Path("/Users/akshitmehta/Development/behave-guard/behaveguard/data/logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "identification.log"
+    
+    log_entry = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "keys_typed": len(session_data.get("keyboard", {}).get("events", [])),
+        "mouse_passive_points": len(session_data.get("mouse", {}).get("passive_points", [])),
+        "has_active_mouse_tasks": (len(session_data.get("mouse", {}).get("dot_trials", [])) > 0 or 
+                                    len(session_data.get("mouse", {}).get("drag_trials", [])) > 0),
+        "candidates": candidate_ids,
+        "identified_subject_id": identified_subject,
+        "confidence": best_candidate["confidence"],
+        "candidates_breakdown": [
+            {
+                "subject_id": c["subject_id"],
+                "confidence": c["confidence"],
+                "verdict": c["verdict"],
+                "keyboard_score": c["keyboard_score"],
+                "mouse_score": c["mouse_score"]
+            }
+            for c in valid_candidates
+        ]
+    }
+    
+    try:
+        with open(log_file, "a") as lf:
+            lf.write(json.dumps(log_entry) + "\n")
+    except Exception as e:
+        print(f"Error writing to identification log: {e}")
 
     return {
-        "identified_subject_id": best_candidate["subject_id"] if best_candidate["confidence"] > 0.4 else "unknown",
+        "identified_subject_id": identified_subject,
         "confidence": best_candidate["confidence"],
         "candidates": valid_candidates
     }
