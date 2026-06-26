@@ -252,8 +252,8 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
     lstm_session = lstm_model.score_session(lstm_wins)
     tcn_session = tcn_model.score_session(tcn_wins)
 
-    kb_score = 0.25 * svm_session["mean_score"] + 0.35 * lstm_session["mean_score"] + 0.40 * tcn_session["mean_score"]
-    kb_anomaly_rate = 0.25 * svm_session["anomaly_rate"] + 0.35 * lstm_session["anomaly_rate"] + 0.40 * tcn_session["anomaly_rate"]
+    kb_score = 0.70 * svm_session["mean_score"] + 0.15 * lstm_session["mean_score"] + 0.15 * tcn_session["mean_score"]
+    kb_anomaly_rate = 0.70 * svm_session["anomaly_rate"] + 0.15 * lstm_session["anomaly_rate"] + 0.15 * tcn_session["anomaly_rate"]
 
     # Score Mouse Dynamics
     m_score = 0.0
