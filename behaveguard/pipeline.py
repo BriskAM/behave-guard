@@ -231,6 +231,17 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
             "anomaly_score": 0.5
         }
 
+    # Ensure all sequence windows are padded to seq_len=50 for PyTorch models (LSTM/TCN)
+    padded_seqs = []
+    for seq in sequences:
+        if len(seq) < 50:
+            pad_len = 50 - len(seq)
+            padded = np.pad(seq, ((0, pad_len), (0, 0)), 'constant')
+            padded_seqs.append(padded)
+        else:
+            padded_seqs.append(seq)
+    sequences = padded_seqs
+
     # Score each window
     svm_wins = [svm_model.score_window(w) for w in aggregates]
     lstm_wins = [lstm_model.score_window(w) for w in sequences]
@@ -254,14 +265,16 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
     dot_trials = session_data.get("mouse", {}).get("dot_trials", [])
     drag_trials = session_data.get("mouse", {}).get("drag_trials", [])
 
+    has_passive_data = False
     if passive_pts and svm_mouse_model.is_trained:
         passive_wins = extract_mouse_kinematic_windows(passive_pts, win_size=30, stride=15)
-        if passive_wins:
+        if len(passive_wins) >= 5:
             scores = [svm_mouse_model.score_window(w) for w in passive_wins]
             m_session = svm_mouse_model.score_session(scores)
             m_score = m_session["mean_score"]
             m_rate = m_session["anomaly_rate"]
             m_verdict = m_session["session_verdict"]
+            has_passive_data = True
 
     z_scores = []
     if dot_trials and "dot_travel_mean" in mouse_baselines:
@@ -287,7 +300,7 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
         mean_z = float(np.mean(z_scores))
         task_anomaly = float(np.clip(mean_z / 3.0, 0.0, 1.0))
 
-    has_mouse_data = m_trained and (passive_pts or dot_trials or drag_trials)
+    has_mouse_data = m_trained and (has_passive_data or len(dot_trials) > 0 or len(drag_trials) > 0)
 
     if has_mouse_data:
         fused_mouse_score = 0.5 * m_score + 0.5 * task_anomaly

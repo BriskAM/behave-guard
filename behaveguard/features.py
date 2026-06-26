@@ -58,14 +58,14 @@ def extract_keystroke_sequences(events: List[Dict[str, Any]], seq_len: int = 50,
         if a_release is None or b_press is None or a_press is None:
             continue
 
-        dwell_ms = a_release - a_press
-        flight_ms = b_press - a_release
-        digraph_ms = b_press - a_press
-        
-        # Sanity check
-        if not (0 < dwell_ms < 2000): continue
-        if not (-500 < flight_ms < 2000): continue
-        if not (0 < digraph_ms < 3000): continue
+        raw_dwell = a_release - a_press
+        raw_flight = b_press - a_release
+        if not (0 < raw_dwell < 2000) or not (-1000 < raw_flight < 5000):
+            continue
+
+        dwell_ms = np.clip(raw_dwell, 10.0, 500.0)
+        flight_ms = np.clip(raw_flight, -150.0, 600.0)
+        digraph_ms = np.clip(b_press - a_press, 10.0, 1000.0)
 
         cat_a = a["key_category"]
         cat_b = b["key_category"]
@@ -130,9 +130,10 @@ def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 5
         if press is None or release is None:
             continue
             
-        dwell = release - press
-        if not (0 < dwell < 2000):
+        raw_dwell = release - press
+        if not (0 < raw_dwell < 2000):
             continue
+        dwell = np.clip(raw_dwell, 10.0, 500.0)
 
         cat = evt["key_category"]
         cat_key = cat if cat in ['alphanum', 'symbol'] else 'special'
@@ -163,9 +164,9 @@ def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 5
             cat_dwells_c[item['cat']].append(dwell_norm)
             
             if prev is not None:
-                flight = item['press'] - prev['release']
-                dgraph = item['press'] - prev['press']
-                iki = item['press'] - prev['press']
+                flight = np.clip(item['press'] - prev['release'], -150.0, 600.0)
+                dgraph = np.clip(item['press'] - prev['press'], 10.0, 1000.0)
+                iki = np.clip(item['press'] - prev['press'], 10.0, 1000.0)
                 
                 flights_c.append(flight)
                 digraphs_c.append(dgraph)

@@ -209,8 +209,8 @@ class BehaveGuardLSTM:
         anomaly_score = float(np.clip(norm_score, 0.0, 1.0))
 
         # Verdict
-        lo = self.t_anomaly * 0.6
-        hi = self.t_anomaly * 1.4
+        lo = self.t_anomaly * 0.7
+        hi = self.t_anomaly * 1.1
         if combined_score <= lo:
             verdict = "legitimate"
         elif combined_score <= hi:
