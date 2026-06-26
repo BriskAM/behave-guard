@@ -1,0 +1,46 @@
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Old implementation files
+behaviour-auth-old/
+Behaveguard-client.xlsx
+
+# Python / virtual envs
+.venv/
+venv/
+ENV/
+env/
+.python-version
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Backend local database and model weights
+behaveguard/data/
+behaveguard/models/
+behaveguard/saved_profiles/
+
+# Next.js client files
+behaveguard-client-master/node_modules/
+behaveguard-client-master/.next/
+behaveguard-client-master/out/
+behaveguard-client-master/build/
+behaveguard-client-master/.env.local
+behaveguard-client-master/.env.development.local
+behaveguard-client-master/.env.test.local
+behaveguard-client-master/.env.production.local
+behaveguard-client-master/npm-debug.log*
+behaveguard-client-master/yarn-debug.log*
+behaveguard-client-master/yarn-error.log*
+behaveguard-client-master/pnpm-debug.log*
