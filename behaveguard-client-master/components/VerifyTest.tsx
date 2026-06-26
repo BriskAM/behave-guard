@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getProfiles, scoreSession, identifyTypist } from "@/lib/submit";
-import { KeyEvent, SessionData } from "@/lib/types";
+import { KeyEvent, SessionData, DotTrial, DragTrial } from "@/lib/types";
 import { normaliseKey } from "@/lib/keyUtils";
 import { usePassiveMouseCollector } from "@/lib/usePassiveMouse";
+import MouseDotTask from "./MouseDotTask";
+import MouseDragTask from "./MouseDragTask";
 
 const TARGET_MIN_KEYS = 40;
 
@@ -27,6 +29,11 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
   const [result, setResult] = useState<any>(null);
   const [scoring, setScoring] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  // Step state for active mouse tasks
+  const [step, setStep] = useState<"typing" | "dot-task" | "drag-task">("typing");
+  const dotTrialsRef = useRef<DotTrial[]>([]);
+  const dragTrialsRef = useRef<DragTrial[]>([]);
 
   useEffect(() => {
     async function load() {
@@ -70,7 +77,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const buildSession = (): SessionData => {
+  const buildSession = (dots: DotTrial[] = [], drags: DragTrial[] = []): SessionData => {
     return {
       subject_id: "test-verif",
       collected_at: new Date().toISOString(),
@@ -82,8 +89,8 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
       },
       mouse: {
         passive_points: passivePoints.current,
-        dot_trials: [],
-        drag_trials: [],
+        dot_trials: dots,
+        drag_trials: drags,
       },
     };
   };
@@ -94,7 +101,32 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
     setErrorMsg("");
     setResult(null);
 
-    const session = buildSession();
+    const session = buildSession(dotTrialsRef.current, dragTrialsRef.current);
+
+    try {
+      if (mode === "verify") {
+        if (!selectedProfile) throw new Error("Please select a profile to verify against.");
+        const res = await scoreSession(selectedProfile, session);
+        setResult(res);
+      } else {
+        if (candidateIds.length < 2) throw new Error("Please select at least 2 candidate profiles.");
+        const res = await identifyTypist(candidateIds, session);
+        setResult(res);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || "Request failed. Make sure the backend models are trained.");
+    } finally {
+      setScoring(false);
+    }
+  };
+
+  const runAnalysisWithTrials = async (drags: DragTrial[]) => {
+    setScoring(true);
+    setErrorMsg("");
+    setResult(null);
+
+    const session = buildSession(dotTrialsRef.current, drags);
 
     try {
       if (mode === "verify") {
@@ -118,8 +150,11 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
     setTyped("");
     eventsRef.current = [];
     setKeyCount(0);
+    dotTrialsRef.current = [];
+    dragTrialsRef.current = [];
     setResult(null);
     setErrorMsg("");
+    setStep("typing");
   };
 
   const toggleCandidate = (id: string) => {
@@ -132,6 +167,51 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
     return (
       <div className="flex-1 flex items-center justify-center font-mono-tight text-sm text-muted">
         loading behaveguard profiles...
+      </div>
+    );
+  }
+
+  if (step === "dot-task") {
+    return (
+      <div className="flex-1 flex flex-col py-8 overflow-y-auto">
+        <div className="max-w-3xl w-full mx-auto px-6 mb-4 flex justify-between items-center">
+          <h3 className="text-lg font-semibold font-mono-tight text-cyan uppercase tracking-wider">active mouse check · step 1</h3>
+          <button 
+            onClick={resetTest}
+            className="font-mono-tight text-xs uppercase tracking-wider border border-border px-4 py-2 rounded-md hover:bg-surface-2 transition"
+          >
+            cancel
+          </button>
+        </div>
+        <MouseDotTask
+          onComplete={(trials) => {
+            dotTrialsRef.current = trials;
+            setStep("drag-task");
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (step === "drag-task") {
+    return (
+      <div className="flex-1 flex flex-col py-8 overflow-y-auto">
+        <div className="max-w-3xl w-full mx-auto px-6 mb-4 flex justify-between items-center">
+          <h3 className="text-lg font-semibold font-mono-tight text-cyan uppercase tracking-wider">active mouse check · step 2</h3>
+          <button 
+            onClick={resetTest}
+            className="font-mono-tight text-xs uppercase tracking-wider border border-border px-4 py-2 rounded-md hover:bg-surface-2 transition"
+          >
+            cancel
+          </button>
+        </div>
+        <MouseDragTask
+          onComplete={(trials) => {
+            dragTrialsRef.current = trials;
+            setStep("typing");
+            runAnalysisWithTrials(trials);
+          }}
+        />
       </div>
     );
   }
@@ -256,13 +336,20 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
                 className="w-full bg-background border border-border rounded-md px-4 py-3 text-sm focus:outline-none focus:border-text transition font-mono-tight"
               />
 
-              <div className="flex gap-3 justify-end">
+              <div className="flex flex-wrap gap-3 justify-end">
                 <button
                   onClick={resetTest}
                   disabled={keyCount === 0 || scoring}
                   className="font-mono-tight text-xs uppercase tracking-wider border border-border px-4 py-2.5 rounded hover:bg-surface-2 transition disabled:opacity-50"
                 >
                   reset
+                </button>
+                <button
+                  onClick={() => setStep("dot-task")}
+                  disabled={keyCount < TARGET_MIN_KEYS || scoring}
+                  className="font-mono-tight text-xs uppercase tracking-wider border border-border px-4 py-2.5 rounded hover:bg-surface-2 transition hover:border-cyan text-cyan disabled:opacity-50"
+                >
+                  run mouse tasks first
                 </button>
                 <button
                   onClick={runAnalysis}
