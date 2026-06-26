@@ -345,20 +345,42 @@ def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_si
         
     return windows
 
+def _robust_mean_std(values: List[float], fallback_mean: float, fallback_std: float) -> tuple[float, float]:
+    if not values:
+        return fallback_mean, fallback_std
+    arr = np.array(values)
+    if len(arr) < 3:
+        return float(np.mean(arr)), float(np.std(arr)) + 1e-8
+    q25, q75 = np.percentile(arr, 25), np.percentile(arr, 75)
+    iqr = q75 - q25
+    lower = q25 - 1.5 * iqr
+    upper = q75 + 1.5 * iqr
+    filtered = arr[(arr >= lower) & (arr <= upper)]
+    if len(filtered) < 3:
+        filtered = arr
+    return float(np.mean(filtered)), float(np.std(filtered)) + 1e-8
+
 def extract_mouse_task_baselines(dot_trials: List[Dict[str, Any]], drag_trials: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compute baseline statistics for dot clicking and drag task metrics."""
     dot_travels = [t["travel_time_ms"] for t in dot_trials if "travel_time_ms" in t]
     dot_errors = [t["error_px"] for t in dot_trials if "error_px" in t]
     drag_durs = [t["duration_ms"] for t in drag_trials if "duration_ms" in t]
     
+    dt_mean, dt_std = _robust_mean_std(dot_travels, 1500.0, 500.0)
+    de_mean, de_std = _robust_mean_std(dot_errors, 10.0, 5.0)
+    dd_mean, dd_std = _robust_mean_std(drag_durs, 1200.0, 400.0)
+    
+    drag_success = [1.0 if t["success"] else 0.0 for t in drag_trials if "success" in t]
+    ds_mean = float(np.mean(drag_success)) if drag_success else 1.0
+    
     return {
-        "dot_travel_mean": float(np.mean(dot_travels)) if dot_travels else 1500.0,
-        "dot_travel_std": float(np.std(dot_travels)) + 1e-8 if dot_travels else 500.0,
-        "dot_error_mean": float(np.mean(dot_errors)) if dot_errors else 10.0,
-        "dot_error_std": float(np.std(dot_errors)) + 1e-8 if dot_errors else 5.0,
-        "drag_duration_mean": float(np.mean(drag_durs)) if drag_durs else 1200.0,
-        "drag_duration_std": float(np.std(drag_durs)) + 1e-8 if drag_durs else 400.0,
-        "drag_success_mean": float(np.mean([1.0 if t["success"] else 0.0 for t in drag_trials if "success" in t])) if drag_trials else 1.0
+        "dot_travel_mean": dt_mean,
+        "dot_travel_std": dt_std,
+        "dot_error_mean": de_mean,
+        "dot_error_std": de_std,
+        "drag_duration_mean": dd_mean,
+        "drag_duration_std": dd_std,
+        "drag_success_mean": ds_mean
     }
 
 class Normalizer:
