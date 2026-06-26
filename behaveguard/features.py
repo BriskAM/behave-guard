@@ -302,6 +302,67 @@ def extract_mouse_aggregates(passive_points: List[Dict[str, Any]],
         drag_success, avg_drag_dur
     ], dtype=np.float32)
 
+def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_size: int = 30, stride: int = 15) -> List[np.ndarray]:
+    """Segment passive points and compute kinematic statistics per window (shape 6)."""
+    if len(passive_points) < 5:
+        return []
+        
+    events_data = []
+    prev_speed = 0.0
+    for i in range(1, len(passive_points) - 1):
+        p1, p2, p3 = passive_points[i-1], passive_points[i], passive_points[i+1]
+        dt = (p2["ts"] - p1["ts"]) / 1000.0
+        if dt <= 0.001:
+            continue
+        dx = p2["x"] - p1["x"]
+        dy = p2["y"] - p1["y"]
+        dist = math.hypot(dx, dy)
+        speed = dist / dt
+        accel = (speed - prev_speed) / dt
+        prev_speed = speed
+        
+        v1 = (p2["x"] - p1["x"], p2["y"] - p1["y"])
+        v2 = (p3["x"] - p2["x"], p3["y"] - p2["y"])
+        cross = v1[0] * v2[1] - v1[1] * v2[0]
+        norm = math.hypot(v1[0], v1[1]) * math.hypot(v2[0], v2[1])
+        curv = cross / norm if norm > 1e-6 else 0.0
+        
+        events_data.append([speed, accel, curv])
+
+    windows = []
+    i = 0
+    while i + win_size <= len(events_data):
+        chunk = events_data[i : i + win_size]
+        chunk_arr = np.array(chunk)
+        mean_vals = np.mean(chunk_arr, axis=0)
+        std_vals = np.std(chunk_arr, axis=0)
+        
+        vec = np.array([
+            mean_vals[0], std_vals[0],  # speed
+            mean_vals[1], std_vals[1],  # accel
+            mean_vals[2], std_vals[2]   # curvature
+        ], dtype=np.float32)
+        windows.append(vec)
+        i += stride
+        
+    return windows
+
+def extract_mouse_task_baselines(dot_trials: List[Dict[str, Any]], drag_trials: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute baseline statistics for dot clicking and drag task metrics."""
+    dot_travels = [t["travel_time_ms"] for t in dot_trials if "travel_time_ms" in t]
+    dot_errors = [t["error_px"] for t in dot_trials if "error_px" in t]
+    drag_durs = [t["duration_ms"] for t in drag_trials if "duration_ms" in t]
+    
+    return {
+        "dot_travel_mean": float(np.mean(dot_travels)) if dot_travels else 1500.0,
+        "dot_travel_std": float(np.std(dot_travels)) + 1e-8 if dot_travels else 500.0,
+        "dot_error_mean": float(np.mean(dot_errors)) if dot_errors else 10.0,
+        "dot_error_std": float(np.std(dot_errors)) + 1e-8 if dot_errors else 5.0,
+        "drag_duration_mean": float(np.mean(drag_durs)) if drag_durs else 1200.0,
+        "drag_duration_std": float(np.std(drag_durs)) + 1e-8 if drag_durs else 400.0,
+        "drag_success_mean": float(np.mean([1.0 if t["success"] else 0.0 for t in drag_trials if "success" in t])) if drag_trials else 1.0
+    }
+
 class Normalizer:
     """Normalizes features by subtracting mean and dividing by std."""
     def __init__(self):

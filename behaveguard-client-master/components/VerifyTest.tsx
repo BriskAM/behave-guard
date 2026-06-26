@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { getProfiles, scoreSession, identifyTypist } from "@/lib/submit";
 import { KeyEvent, SessionData } from "@/lib/types";
 import { normaliseKey } from "@/lib/keyUtils";
+import { usePassiveMouseCollector } from "@/lib/usePassiveMouse";
 
 const TARGET_MIN_KEYS = 40;
 
@@ -11,6 +12,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"verify" | "identify">("verify");
+  const passivePoints = usePassiveMouseCollector();
   
   // Selection states
   const [selectedProfile, setSelectedProfile] = useState<string>("");
@@ -79,7 +81,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
         free_text_length: typed.length,
       },
       mouse: {
-        passive_points: [],
+        passive_points: passivePoints.current,
         dot_trials: [],
         drag_trials: [],
       },
@@ -292,11 +294,30 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
                       </span>
                     </div>
 
-                    <div className="bg-surface-2 border border-border rounded-lg p-4 text-center">
-                      <div className="text-3xl font-semibold mb-1 font-mono-tight">
-                        {Math.round((1 - result.anomaly_score) * 100)}%
+                    <div className="space-y-3">
+                      <div className="bg-surface-2 border border-border rounded-lg p-4 text-center">
+                        <div className="text-3xl font-semibold mb-1 font-mono-tight text-cyan">
+                          {Math.round((1 - result.anomaly_score) * 100)}%
+                        </div>
+                        <div className="text-[10px] uppercase tracking-widest text-muted font-mono-tight">Fused Biometric Match Rate</div>
                       </div>
-                      <div className="text-[10px] uppercase tracking-widest text-muted font-mono-tight">biometric match rate</div>
+
+                      {result.mouse_score !== null && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-surface-2 border border-border rounded-lg p-3 text-center">
+                            <div className="text-xl font-semibold font-mono-tight text-amber">
+                              {Math.round((1 - result.keyboard_score) * 100)}%
+                            </div>
+                            <div className="text-[9px] uppercase tracking-wider text-muted font-mono-tight">Keyboard Match</div>
+                          </div>
+                          <div className="bg-surface-2 border border-border rounded-lg p-3 text-center">
+                            <div className="text-xl font-semibold font-mono-tight text-cyan">
+                              {Math.round((1 - result.mouse_score) * 100)}%
+                            </div>
+                            <div className="text-[9px] uppercase tracking-wider text-muted font-mono-tight">Mouse Match</div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-3 pt-2">
@@ -304,7 +325,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
                       
                       {/* SVM */}
                       <div className="flex justify-between items-center bg-surface-2 rounded p-2.5 border border-border text-xs font-mono-tight">
-                        <span className="text-muted">One-Class SVM Baseline</span>
+                        <span className="text-muted">Keyboard OC-SVM</span>
                         <span className={result.models.svm.verdict === "legitimate" ? "text-green" : "text-red"}>
                           {result.models.svm.verdict}
                         </span>
@@ -312,7 +333,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
 
                       {/* LSTM */}
                       <div className="flex justify-between items-center bg-surface-2 rounded p-2.5 border border-border text-xs font-mono-tight">
-                        <span className="text-muted">LSTM Sequence Autoencoder</span>
+                        <span className="text-muted">Keyboard LSTM Autoencoder</span>
                         <span className={result.models.lstm.verdict === "legitimate" ? "text-green" : "text-red"}>
                           {result.models.lstm.verdict}
                         </span>
@@ -320,11 +341,21 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
 
                       {/* TCN */}
                       <div className="flex justify-between items-center bg-surface-2 rounded p-2.5 border border-border text-xs font-mono-tight">
-                        <span className="text-muted">TCN Dilation Autoencoder</span>
+                        <span className="text-muted">Keyboard TCN Autoencoder</span>
                         <span className={result.models.tcn.verdict === "legitimate" ? "text-green" : "text-red"}>
                           {result.models.tcn.verdict}
                         </span>
                       </div>
+
+                      {/* Mouse SVM */}
+                      {result.models.mouse_svm && (
+                        <div className="flex justify-between items-center bg-surface-2 rounded p-2.5 border border-border text-xs font-mono-tight">
+                          <span className="text-muted">Mouse Kinematic SVM</span>
+                          <span className={result.models.mouse_svm.verdict === "legitimate" ? "text-green" : "text-red"}>
+                            {result.models.mouse_svm.verdict} (Z-anomaly: {Math.round(result.models.mouse_svm.task_anomaly * 100)}%)
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (

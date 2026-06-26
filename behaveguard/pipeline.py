@@ -7,7 +7,10 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 
 from behaveguard.storage import MODELS_DIR, load_keyboard_events, load_mouse_data
-from behaveguard.features import extract_keystroke_sequences, extract_keystroke_aggregates
+from behaveguard.features import (
+    extract_keystroke_sequences, extract_keystroke_aggregates,
+    extract_mouse_kinematic_windows, extract_mouse_task_baselines
+)
 from behaveguard.models.svm import BehaveGuardSVM
 from behaveguard.models.lstm import BehaveGuardLSTM
 from behaveguard.models.tcn import BehaveGuardTCN
@@ -123,7 +126,33 @@ def train_user_models(subject_id: str):
             tcn_model.t_anomaly = float(np.percentile(scores, 95))
         tcn_model.save(subject_dir / "tcn.pkl")
 
-        save_status(subject_id, "completed", 1.0, "All models (SVM, LSTM, TCN) successfully trained.")
+        # 6. Train Mouse Dynamics Kinematic SVM & Task Baselines
+        save_status(subject_id, "training", 0.85, "Extracting and training mouse dynamics models...")
+        mouse_data = load_mouse_data(subject_id)
+        passive = mouse_data.get("passive", [])
+        dot_trials = mouse_data.get("dot_trials", [])
+        drag_trials = mouse_data.get("drag_trials", [])
+
+        # Train mouse SVM
+        mouse_wins = extract_mouse_kinematic_windows(passive, win_size=30, stride=5)
+        if len(mouse_wins) >= 10:
+            split_idx = int(len(mouse_wins) * 0.8)
+            train_m = mouse_wins[:split_idx]
+            cal_m = mouse_wins[split_idx:]
+            
+            svm_mouse = BehaveGuardSVM()
+            svm_mouse.fit(train_m)
+            if cal_m:
+                scores = [svm_mouse.score_window(w)["raw_decision"] for w in cal_m]
+                svm_mouse.t_anomaly = float(np.percentile(scores, 95))
+            svm_mouse.save(subject_dir / "svm_mouse.pkl")
+            
+        # Save mouse task baselines
+        mouse_baselines = extract_mouse_task_baselines(dot_trials, drag_trials)
+        with open(subject_dir / "mouse_baselines.json", 'w') as f:
+            json.dump(mouse_baselines, f)
+
+        save_status(subject_id, "completed", 1.0, "All models (SVM, LSTM, TCN, Mouse SVM) successfully trained.")
         print(f"Models successfully trained for '{subject_id}'!")
     except Exception as e:
         error_msg = str(e)
@@ -144,6 +173,8 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
     svm_path = subject_dir / "svm.pkl"
     lstm_path = subject_dir / "lstm.pkl"
     tcn_path = subject_dir / "tcn.pkl"
+    svm_mouse_path = subject_dir / "svm_mouse.pkl"
+    baselines_path = subject_dir / "mouse_baselines.json"
 
     if not (svm_path.exists() and lstm_path.exists() and tcn_path.exists()):
         return {
@@ -160,6 +191,18 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
 
     tcn_model = BehaveGuardTCN()
     tcn_model.load(tcn_path)
+
+    svm_mouse_model = BehaveGuardSVM()
+    if svm_mouse_path.exists():
+        svm_mouse_model.load(svm_mouse_path)
+
+    mouse_baselines = {}
+    if baselines_path.exists():
+        try:
+            with open(baselines_path, 'r') as f:
+                mouse_baselines = json.load(f)
+        except Exception:
+            pass
 
     # Extract features from session keyboard events
     events = session_data.get("keyboard", {}).get("events", [])
@@ -198,10 +241,65 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
     lstm_session = lstm_model.score_session(lstm_wins)
     tcn_session = tcn_model.score_session(tcn_wins)
 
-    # Fuse scores
-    # Mean of anomaly scores across the session
-    fused_score = (svm_session["mean_score"] + lstm_session["mean_score"] + tcn_session["mean_score"]) / 3.0
-    fused_anomaly_rate = (svm_session["anomaly_rate"] + lstm_session["anomaly_rate"] + tcn_session["anomaly_rate"]) / 3.0
+    kb_score = (svm_session["mean_score"] + lstm_session["mean_score"] + tcn_session["mean_score"]) / 3.0
+    kb_anomaly_rate = (svm_session["anomaly_rate"] + lstm_session["anomaly_rate"] + tcn_session["anomaly_rate"]) / 3.0
+
+    # Score Mouse Dynamics
+    m_score = 0.0
+    m_rate = 0.0
+    m_verdict = "legitimate"
+    m_trained = svm_mouse_path.exists()
+    
+    passive_pts = session_data.get("mouse", {}).get("passive_points", [])
+    dot_trials = session_data.get("mouse", {}).get("dot_trials", [])
+    drag_trials = session_data.get("mouse", {}).get("drag_trials", [])
+
+    if passive_pts and svm_mouse_model.is_trained:
+        passive_wins = extract_mouse_kinematic_windows(passive_pts, win_size=30, stride=15)
+        if passive_wins:
+            scores = [svm_mouse_model.score_window(w) for w in passive_wins]
+            m_session = svm_mouse_model.score_session(scores)
+            m_score = m_session["mean_score"]
+            m_rate = m_session["anomaly_rate"]
+            m_verdict = m_session["session_verdict"]
+
+    z_scores = []
+    if dot_trials and "dot_travel_mean" in mouse_baselines:
+        for t in dot_trials:
+            travel = t.get("travel_time_ms")
+            error = t.get("error_px")
+            if travel is not None:
+                z_scores.append(abs((travel - mouse_baselines["dot_travel_mean"]) / mouse_baselines["dot_travel_std"]))
+            if error is not None:
+                z_scores.append(abs((error - mouse_baselines["dot_error_mean"]) / mouse_baselines["dot_error_std"]))
+                
+    if drag_trials and "drag_duration_mean" in mouse_baselines:
+        for t in drag_trials:
+            dur = t.get("duration_ms")
+            success = t.get("success")
+            if dur is not None:
+                z_scores.append(abs((dur - mouse_baselines["drag_duration_mean"]) / mouse_baselines["drag_duration_std"]))
+            if success is not None and not success:
+                z_scores.append(3.0)
+
+    task_anomaly = 0.0
+    if z_scores:
+        mean_z = float(np.mean(z_scores))
+        task_anomaly = float(np.clip(mean_z / 3.0, 0.0, 1.0))
+
+    has_mouse_data = m_trained and (passive_pts or dot_trials or drag_trials)
+
+    if has_mouse_data:
+        fused_mouse_score = 0.5 * m_score + 0.5 * task_anomaly
+        fused_mouse_rate = 0.5 * m_rate + 0.5 * task_anomaly
+        
+        fused_score = 0.5 * kb_score + 0.5 * fused_mouse_score
+        fused_anomaly_rate = 0.5 * kb_anomaly_rate + 0.5 * fused_mouse_rate
+    else:
+        fused_mouse_score = 0.0
+        fused_mouse_rate = 0.0
+        fused_score = kb_score
+        fused_anomaly_rate = kb_anomaly_rate
 
     if fused_anomaly_rate < 0.25:
         verdict = "legitimate"
@@ -226,6 +324,8 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
         "anomaly_score": fused_score,
         "anomaly_rate": fused_anomaly_rate,
         "recommended_action": action,
+        "keyboard_score": kb_score,
+        "mouse_score": fused_mouse_score if has_mouse_data else None,
         "models": {
             "svm": {
                 "verdict": svm_session["session_verdict"],
@@ -241,7 +341,13 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
                 "verdict": tcn_session["session_verdict"],
                 "anomaly_rate": tcn_session["anomaly_rate"],
                 "anomaly_score": tcn_session["mean_score"]
-            }
+            },
+            "mouse_svm": {
+                "verdict": m_verdict,
+                "anomaly_rate": m_rate,
+                "anomaly_score": m_score,
+                "task_anomaly": task_anomaly
+            } if has_mouse_data else None
         }
     }
 

@@ -198,8 +198,11 @@ with tab_mouse:
                 success_rate = df_drags["success"].mean() * 100.0
                 avg_dur = df_drags["duration_ms"].mean()
                 
-                st.metric("Drag Tasks Success Rate", f"{success_rate:.1f}%")
-                st.metric("Avg Drag Duration", f"{avg_dur:.1f} ms")
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    st.metric("Drag Success Rate", f"{success_rate:.1f}%")
+                with col_m2:
+                    st.metric("Avg Drag Duration", f"{avg_dur:.1f} ms")
                 
                 fig = px.box(df_drags, y="duration_ms", points="all",
                              title="Drag Durations Boxplot",
@@ -208,6 +211,42 @@ with tab_mouse:
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No drag-and-drop task records.")
+
+        # New Row: Passive Mouse Kinematics
+        st.write("---")
+        st.subheader("Passive Kinematics & Cursor Trajectory")
+        if passive_pts:
+            df_passive = pd.DataFrame(passive_pts).sort_values("ts").reset_index(drop=True)
+            df_passive["dt"] = df_passive["ts"].diff() / 1000.0
+            df_passive["dx"] = df_passive["x"].diff()
+            df_passive["dy"] = df_passive["y"].diff()
+            df_passive["dist"] = np.hypot(df_passive["dx"], df_passive["dy"])
+            df_passive["speed"] = df_passive["dist"] / (df_passive["dt"] + 1e-6)
+            
+            # Clean outliers
+            df_clean = df_passive[(df_passive["dt"] > 0.001) & (df_passive["speed"] < 5000)].copy()
+            
+            col_p1, col_p2 = st.columns(2)
+            
+            with col_p1:
+                fig_speed = px.histogram(df_clean, x="speed", nbins=50,
+                                         title="Passive Movement Speed Distribution",
+                                         labels={"speed": "Speed (pixels / second)"},
+                                         color_discrete_sequence=["#00E5FF"])
+                fig_speed.update_layout(bargap=0.1)
+                st.plotly_chart(fig_speed, use_container_width=True)
+                
+            with col_p2:
+                # Plot a subset of points (e.g. up to 400 points) to show a trajectory path
+                df_traj = df_clean.head(400)
+                fig_traj = px.line(df_traj, x="x", y="y", markers=True,
+                                   title="Recent Mouse Cursor Path (First 400 points)",
+                                   labels={"x": "X Position (px)", "y": "Y Position (px)"},
+                                   color_discrete_sequence=["#D50000"])
+                fig_traj.update_yaxes(autorange="reversed") # Match screen coordinate system
+                st.plotly_chart(fig_traj, use_container_width=True)
+        else:
+            st.info("No passive mouse trajectory points recorded yet.")
 
 # ------------------------------------------------------------------ #
 # TAB 4: MODELS & DRIFT
