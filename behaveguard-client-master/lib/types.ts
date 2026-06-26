@@ -6,6 +6,7 @@ export type Screen =
   | "mouse-dot"
   | "mouse-drag"
   | "analytics"
+  | "verify"
   | "done";
 
 export interface KeyEvent {

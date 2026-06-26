@@ -12,6 +12,7 @@ import KeyboardTest from "@/components/KeyboardTest";
 import MouseDotTask from "@/components/MouseDotTask";
 import MouseDragTask from "@/components/MouseDragTask";
 import Analytics from "@/components/Analytics";
+import VerifyTest from "@/components/VerifyTest";
 import Done from "@/components/Done";
 
 export default function Home() {
@@ -47,13 +48,18 @@ export default function Home() {
     };
   }
 
-  const showRail = screen !== "landing" && screen !== "done";
+  const showRail = screen !== "landing" && screen !== "done" && screen !== "verify";
 
   return (
     <div className="flex flex-col min-h-screen">
       {showRail && <StageRail current={screen} />}
 
-      {screen === "landing" && <Landing onStart={() => setScreen("consent")} />}
+      {screen === "landing" && (
+        <Landing 
+          onStart={() => setScreen("consent")} 
+          onVerify={() => setScreen("verify")}
+        />
+      )}
 
       {screen === "consent" && <Consent onAgree={() => setScreen("name")} />}
 
@@ -98,6 +104,10 @@ export default function Home() {
 
       {screen === "analytics" && sessionData && (
         <Analytics data={sessionData} onFinish={() => setScreen("done")} />
+      )}
+
+      {screen === "verify" && (
+        <VerifyTest onBack={() => setScreen("landing")} />
       )}
 
       {screen === "done" && <Done />}

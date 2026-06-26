@@ -1,6 +1,6 @@
 "use client";
 
-export default function Landing({ onStart }: { onStart: () => void }) {
+export default function Landing({ onStart, onVerify }: { onStart: () => void; onVerify: () => void }) {
   return (
     <div className="flex-1 flex items-center justify-center px-6">
       <div className="max-w-xl text-center fade-up">
@@ -19,12 +19,20 @@ export default function Landing({ onStart }: { onStart: () => void }) {
           A 5-minute test of how you type and how you move a cursor. Used to study
           behavioral biometrics — the rhythm that's unique to you, not what you type.
         </p>
-        <button
-          onClick={onStart}
-          className="font-mono-tight text-sm uppercase tracking-wider bg-amber text-bg px-8 py-3 rounded-md hover:brightness-110 transition active:scale-[0.98]"
-        >
-          start test →
-        </button>
+        <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
+          <button
+            onClick={onStart}
+            className="w-full sm:w-auto font-mono-tight text-sm uppercase tracking-wider bg-amber text-bg px-8 py-3 rounded-md hover:brightness-110 transition active:scale-[0.98]"
+          >
+            start enrollment test →
+          </button>
+          <button
+            onClick={onVerify}
+            className="w-full sm:w-auto font-mono-tight text-sm uppercase tracking-wider border border-cyan text-cyan px-8 py-3 rounded-md hover:bg-cyan/10 transition active:scale-[0.98]"
+          >
+            verify & identify →
+          </button>
+        </div>
         <div className="mt-6 text-xs text-muted font-mono-tight">
           ~3 min keyboard · ~2 min mouse
         </div>
