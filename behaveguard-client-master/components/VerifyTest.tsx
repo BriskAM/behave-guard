@@ -15,16 +15,16 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"verify" | "identify">("verify");
   const passivePoints = usePassiveMouseCollector();
-  
+
   // Selection states
   const [selectedProfile, setSelectedProfile] = useState<string>("");
   const [candidateIds, setCandidateIds] = useState<string[]>([]);
-  
+
   // Typing states
   const [typed, setTyped] = useState("");
   const eventsRef = useRef<KeyEvent[]>([]);
   const [keyCount, setKeyCount] = useState(0);
-  
+
   // Results states
   const [result, setResult] = useState<any>(null);
   const [scoring, setScoring] = useState(false);
@@ -40,7 +40,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
       const list = await getProfiles();
       setProfiles(list);
       setLoading(false);
-      
+
       const trained = list.filter((p) => p.is_trained);
       if (trained.length > 0) {
         setSelectedProfile(trained[0].subject_id);
@@ -64,8 +64,8 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
     setKeyCount(eventsRef.current.length);
   };
 
-  const handleKeyUp = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (["Shift", "Control", "Alt", "Meta", "CapsLock"].includes(e.key)) return;
+  function handleKeyUp(e: React.KeyboardEvent<HTMLInputElement>) {
+    // Don't early-return for modifiers — still need to close any open events
     const ts = performance.now();
     const { id } = normaliseKey(e.key);
     for (let i = eventsRef.current.length - 1; i >= 0; i--) {
@@ -75,8 +75,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
         break;
       }
     }
-  };
-
+  }
   const buildSession = (dots: DotTrial[] = [], drags: DragTrial[] = []): SessionData => {
     return {
       subject_id: "test-verif",
@@ -158,7 +157,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
   };
 
   const toggleCandidate = (id: string) => {
-    setCandidateIds((prev) => 
+    setCandidateIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
@@ -176,7 +175,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
       <div className="flex-1 flex flex-col py-8 overflow-y-auto">
         <div className="max-w-3xl w-full mx-auto px-6 mb-4 flex justify-between items-center">
           <h3 className="text-lg font-semibold font-mono-tight text-cyan uppercase tracking-wider">active mouse check · step 1</h3>
-          <button 
+          <button
             onClick={resetTest}
             className="font-mono-tight text-xs uppercase tracking-wider border border-border px-4 py-2 rounded-md hover:bg-surface-2 transition"
           >
@@ -198,7 +197,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
       <div className="flex-1 flex flex-col py-8 overflow-y-auto">
         <div className="max-w-3xl w-full mx-auto px-6 mb-4 flex justify-between items-center">
           <h3 className="text-lg font-semibold font-mono-tight text-cyan uppercase tracking-wider">active mouse check · step 2</h3>
-          <button 
+          <button
             onClick={resetTest}
             className="font-mono-tight text-xs uppercase tracking-wider border border-border px-4 py-2 rounded-md hover:bg-surface-2 transition"
           >
@@ -227,7 +226,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
             <div className="font-mono-tight text-xs uppercase tracking-[0.3em] text-muted mb-2">verify & identify</div>
             <h2 className="text-2xl font-semibold">Biometric Sandbox</h2>
           </div>
-          <button 
+          <button
             onClick={onBack}
             className="font-mono-tight text-xs uppercase tracking-wider border border-border px-4 py-2 rounded-md hover:bg-surface-2 transition"
           >
@@ -241,7 +240,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
             <p className="text-xs text-muted leading-relaxed mb-6">
               Go back and run a standard enrollment test to capture training data and fit the machine learning models.
             </p>
-            <button 
+            <button
               onClick={onBack}
               className="font-mono-tight text-xs uppercase tracking-wider bg-amber text-bg px-6 py-2.5 rounded-md hover:brightness-105 transition"
             >
@@ -293,15 +292,15 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
                   {trainedProfiles.map((p) => {
                     const isChecked = candidateIds.includes(p.subject_id);
                     return (
-                      <div 
-                        key={p.subject_id} 
+                      <div
+                        key={p.subject_id}
                         onClick={() => { toggleCandidate(p.subject_id); resetTest(); }}
                         className={`flex items-center gap-3 border rounded-lg p-3 cursor-pointer transition select-none ${isChecked ? "border-amber bg-amber/5 text-amber" : "border-border hover:border-text/30"}`}
                       >
                         <input
                           type="checkbox"
                           checked={isChecked}
-                          onChange={() => {}} // handled by div onClick
+                          onChange={() => { }} // handled by div onClick
                           className="accent-amber"
                         />
                         <span className="font-mono-tight text-sm">{p.subject_id}</span>
@@ -411,7 +410,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
 
                     <div className="space-y-3 pt-2">
                       <div className="text-xs font-mono-tight uppercase tracking-wider text-muted">model breakdown:</div>
-                      
+
                       {/* SVM */}
                       <div className="flex justify-between items-center bg-surface-2 rounded p-2.5 border border-border text-xs font-mono-tight">
                         <span className="text-muted">Keyboard OC-SVM</span>
@@ -466,7 +465,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
                             <span className="text-muted">{Math.round(c.confidence * 100)}% confidence ({c.verdict})</span>
                           </div>
                           <div className="h-2 bg-surface-2 rounded-full overflow-hidden border border-border">
-                            <div 
+                            <div
                               className="h-full bg-amber rounded-full transition-all duration-500"
                               style={{ width: `${c.confidence * 100}%` }}
                             />

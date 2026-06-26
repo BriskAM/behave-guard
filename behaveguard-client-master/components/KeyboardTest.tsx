@@ -104,9 +104,8 @@ export default function KeyboardTest({
   }
 
   function handleKeyUp(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (["Shift", "Control", "Alt", "Meta", "CapsLock"].includes(e.key)) return;
+    // Don't early-return for modifiers — still need to close any open events
     const ts = performance.now();
-    // attach release to the most recent open event for this key id
     const { id } = normaliseKey(e.key);
     for (let i = eventsRef.current.length - 1; i >= 0; i--) {
       const ev = eventsRef.current[i];
