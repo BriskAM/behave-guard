@@ -14,7 +14,6 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"verify" | "identify">("verify");
-  const passivePoints = usePassiveMouseCollector(step === "typing" && !result);
   
   // Selection states
   const [selectedProfile, setSelectedProfile] = useState<string>("");
@@ -34,6 +33,7 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
   const [step, setStep] = useState<"typing" | "dot-task" | "drag-task">("typing");
   const dotTrialsRef = useRef<DotTrial[]>([]);
   const dragTrialsRef = useRef<DragTrial[]>([]);
+  const passivePoints = usePassiveMouseCollector(step === "typing" && !result);
 
   useEffect(() => {
     async function load() {
