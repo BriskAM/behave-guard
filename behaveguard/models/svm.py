@@ -61,9 +61,9 @@ class BehaveGuardSVM:
         
         # Normalize: anomaly_score in [0, 1]
         if self.t_anomaly > 0:
-            norm_score = raw_decision / (self.t_anomaly * 2.0)
+            norm_score = raw_decision / (self.t_anomaly * 1.5)
         else:
-            norm_score = raw_decision / 2.0
+            norm_score = raw_decision / 1.5
         anomaly_score = float(np.clip(norm_score, 0.0, 1.0))
         
         # Verdict logic

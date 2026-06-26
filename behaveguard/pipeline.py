@@ -252,8 +252,8 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
     lstm_session = lstm_model.score_session(lstm_wins)
     tcn_session = tcn_model.score_session(tcn_wins)
 
-    kb_score = (svm_session["mean_score"] + lstm_session["mean_score"] + tcn_session["mean_score"]) / 3.0
-    kb_anomaly_rate = (svm_session["anomaly_rate"] + lstm_session["anomaly_rate"] + tcn_session["anomaly_rate"]) / 3.0
+    kb_score = 0.25 * svm_session["mean_score"] + 0.35 * lstm_session["mean_score"] + 0.40 * tcn_session["mean_score"]
+    kb_anomaly_rate = 0.25 * svm_session["anomaly_rate"] + 0.35 * lstm_session["anomaly_rate"] + 0.40 * tcn_session["anomaly_rate"]
 
     # Score Mouse Dynamics
     m_score = 0.0
@@ -414,13 +414,16 @@ def identify_user(candidate_ids: List[str], session_data: Dict[str, Any]) -> Dic
             "candidates": []
         }
 
-    # Normalize match scores to create confidence percentages (relative probability)
-    sum_scores = sum(scores)
-    if sum_scores > 0:
-        for c in valid_candidates:
-            c["confidence"] = float(c["match_score"] / sum_scores)
+    # Use Softmax normalization (with a temperature scaling factor of 6.0)
+    # to polarize confidence scores and clearly separate legitimate typists from impostors.
+    k = 6.0
+    exp_scores = [np.exp(k * s) for s in scores]
+    sum_exp = sum(exp_scores)
+    
+    if sum_exp > 0:
+        for c, exp_s in zip(valid_candidates, exp_scores):
+            c["confidence"] = float(exp_s / sum_exp)
     else:
-        # Uniform if all scores are 0
         val = 1.0 / len(valid_candidates)
         for c in valid_candidates:
             c["confidence"] = val

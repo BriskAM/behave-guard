@@ -244,9 +244,9 @@ class BehaveGuardTCN:
 
         # Map to anomaly_score in [0, 1]
         if self.t_anomaly > 0:
-            norm_score = combined_score / (self.t_anomaly * 2.0)
+            norm_score = combined_score / (self.t_anomaly * 1.5)
         else:
-            norm_score = combined_score / 2.0
+            norm_score = combined_score / 1.5
         anomaly_score = float(np.clip(norm_score, 0.0, 1.0))
 
         # Verdict

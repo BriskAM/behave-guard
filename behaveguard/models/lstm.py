@@ -64,7 +64,7 @@ class BehaveGuardLSTM:
         feature_dim: int = 10,
         latent_dim: int = 16,
         epochs: int = 100,
-        lr: float = 0.01,
+        lr: float = 0.005,
         batch_size: int = 16,
         alpha: float = 0.6
     ):
@@ -105,7 +105,8 @@ class BehaveGuardLSTM:
 
         self.model.train()
         dataset = torch.tensor(X_scaled, dtype=torch.float32)
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, self.epochs)
 
         # Feature weights for weighted reconstruction error
         # Order: dwell_ms, flight_ms, digraph_ms, [4x key_cat], time_sin, time_cos, freq_weight
@@ -130,7 +131,9 @@ class BehaveGuardLSTM:
 
                 loss = recon_loss + 0.2 * compactness
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 optimizer.step()
+            scheduler.step()
 
         # Calibration
         self.model.eval()
@@ -203,9 +206,9 @@ class BehaveGuardLSTM:
 
         # Map to anomaly_score in [0, 1]
         if self.t_anomaly > 0:
-            norm_score = combined_score / (self.t_anomaly * 2.0)
+            norm_score = combined_score / (self.t_anomaly * 1.5)
         else:
-            norm_score = combined_score / 2.0
+            norm_score = combined_score / 1.5
         anomaly_score = float(np.clip(norm_score, 0.0, 1.0))
 
         # Verdict

@@ -315,8 +315,8 @@ def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_si
         dx = p2["x"] - p1["x"]
         dy = p2["y"] - p1["y"]
         dist = math.hypot(dx, dy)
-        speed = dist / dt
-        accel = (speed - prev_speed) / dt
+        speed = float(np.clip(dist / dt, 0.0, 4000.0))
+        accel = float(np.clip((speed - prev_speed) / dt, -60000.0, 60000.0))
         prev_speed = speed
         
         v1 = (p2["x"] - p1["x"], p2["y"] - p1["y"])
