@@ -67,8 +67,8 @@ class BehaveGuardSVM:
         anomaly_score = float(np.clip(norm_score, 0.0, 1.0))
         
         # Verdict logic
-        lo = self.t_anomaly * 0.7
-        hi = self.t_anomaly * 1.1
+        lo = self.t_anomaly * 0.6
+        hi = self.t_anomaly * 1.4
         if raw_decision <= lo:
             verdict = "legitimate"
         elif raw_decision <= hi:

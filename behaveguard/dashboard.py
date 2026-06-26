@@ -9,6 +9,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 from behaveguard.storage import (
     DATA_DIR, get_enrolled_profiles, load_keyboard_events, load_mouse_data
@@ -310,9 +311,12 @@ with tab_clusters:
     else:
         X = np.stack(all_features)
         
+        # Standardize features before running PCA
+        X_scaled = StandardScaler().fit_transform(X)
+        
         # PCA projection to 2D
         pca = PCA(n_components=2)
-        X_pca = pca.fit_transform(X)
+        X_pca = pca.fit_transform(X_scaled)
         
         df_pca = pd.DataFrame(X_pca, columns=["Principal Component 1", "Principal Component 2"])
         df_pca["Subject ID"] = labels

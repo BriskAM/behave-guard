@@ -106,7 +106,7 @@ def train_user_models(subject_id: str):
 
         # 4. Train LSTM
         save_status(subject_id, "training", 0.5, "Training PyTorch LSTM Autoencoder (this may take a minute)...")
-        lstm_model = BehaveGuardLSTM(epochs=60, batch_size=16)
+        lstm_model = BehaveGuardLSTM(epochs=120, batch_size=16)
         lstm_model.fit(train_seq)
         
         # Calibrate LSTM on validation
@@ -117,7 +117,7 @@ def train_user_models(subject_id: str):
 
         # 5. Train TCN
         save_status(subject_id, "training", 0.7, "Training PyTorch TCN Autoencoder...")
-        tcn_model = BehaveGuardTCN(epochs=60, batch_size=16)
+        tcn_model = BehaveGuardTCN(epochs=120, batch_size=16)
         tcn_model.fit(train_seq)
         
         # Calibrate TCN on validation
@@ -134,7 +134,7 @@ def train_user_models(subject_id: str):
         drag_trials = mouse_data.get("drag_trials", [])
 
         # Train mouse SVM
-        mouse_wins = extract_mouse_kinematic_windows(passive, win_size=30, stride=5)
+        mouse_wins = extract_mouse_kinematic_windows(passive, win_size=100, stride=5)
         if len(mouse_wins) >= 10:
             split_idx = int(len(mouse_wins) * 0.8)
             train_m = mouse_wins[:split_idx]
@@ -267,8 +267,8 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
 
     has_passive_data = False
     if passive_pts and svm_mouse_model.is_trained:
-        passive_wins = extract_mouse_kinematic_windows(passive_pts, win_size=30, stride=15)
-        if len(passive_wins) >= 30:
+        passive_wins = extract_mouse_kinematic_windows(passive_pts, win_size=100, stride=25)
+        if len(passive_wins) >= 10:
             scores = [svm_mouse_model.score_window(w) for w in passive_wins]
             m_session = svm_mouse_model.score_session(scores)
             m_score = m_session["mean_score"]
