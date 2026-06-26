@@ -344,20 +344,22 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
                 >
                   reset
                 </button>
-                <button
-                  onClick={() => setStep("dot-task")}
-                  disabled={keyCount < TARGET_MIN_KEYS || scoring}
-                  className="font-mono-tight text-xs uppercase tracking-wider border border-border px-4 py-2.5 rounded hover:bg-surface-2 transition hover:border-cyan text-cyan disabled:opacity-50"
-                >
-                  run mouse tasks first
-                </button>
-                <button
-                  onClick={runAnalysis}
-                  disabled={keyCount < TARGET_MIN_KEYS || scoring}
-                  className={`font-mono-tight text-xs uppercase tracking-wider text-bg px-6 py-2.5 rounded transition disabled:opacity-50 ${mode === "verify" ? "bg-cyan" : "bg-amber"}`}
-                >
-                  {scoring ? "analysing..." : mode === "verify" ? "verify signature" : "identify typist"}
-                </button>
+                {keyCount < TARGET_MIN_KEYS ? (
+                  <button
+                    disabled
+                    className="font-mono-tight text-xs uppercase tracking-wider bg-surface-2 border border-border text-muted px-6 py-2.5 rounded opacity-50 cursor-not-allowed"
+                  >
+                    Type {TARGET_MIN_KEYS - keyCount} more keys to proceed
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setStep("dot-task")}
+                    disabled={scoring}
+                    className="font-mono-tight text-xs uppercase tracking-wider bg-cyan text-bg px-6 py-2.5 rounded hover:brightness-105 transition disabled:opacity-50 flex items-center gap-1.5 font-semibold"
+                  >
+                    {scoring ? "analysing..." : "Proceed to Mouse Tasks →"}
+                  </button>
+                )}
               </div>
             </div>
 
