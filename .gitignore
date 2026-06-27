@@ -27,12 +27,12 @@ htmlcov/
 .ipynb_checkpoints/
 
 # Backend local database and model weights
-behaveguard/data/
-behaveguard/models/*/
-behaveguard/models/**/*.pkl
-behaveguard/models/**/*.pt
-behaveguard/models/**/*.json
-behaveguard/saved_profiles/
+# behaveguard/data/
+# behaveguard/models/*/
+# behaveguard/models/**/*.pkl
+# behaveguard/models/**/*.pt
+# behaveguard/models/**/*.json
+# behaveguard/saved_profiles/
 
 # Next.js client files
 behaveguard-client-master/node_modules/

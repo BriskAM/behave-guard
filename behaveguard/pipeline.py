@@ -101,7 +101,8 @@ def train_user_models(subject_id: str):
         # Calibrate SVM on validation
         if cal_agg:
             scores = [svm_model.score_window(w)["raw_decision"] for w in cal_agg]
-            svm_model.t_anomaly = max(float(np.percentile(scores, 95)), 0.05)
+            floor_t = 0.15 if train_agg[0].shape[0] == 23 else 0.05
+            svm_model.t_anomaly = max(float(np.percentile(scores, 95)), floor_t)
         svm_model.save(subject_dir / "svm.pkl")
 
         # 4. Train LSTM
@@ -133,8 +134,14 @@ def train_user_models(subject_id: str):
         dot_trials = mouse_data.get("dot_trials", [])
         drag_trials = mouse_data.get("drag_trials", [])
 
+        # Save mouse task baselines
+        mouse_baselines = extract_mouse_task_baselines(dot_trials, drag_trials)
+        with open(subject_dir / "mouse_baselines.json", 'w') as f:
+            json.dump(mouse_baselines, f)
+
         # Train mouse SVM
-        mouse_wins = extract_mouse_kinematic_windows(passive, win_size=100, stride=5)
+        avg_drag = mouse_baselines.get("drag_duration_mean", 1200.0)
+        mouse_wins = extract_mouse_kinematic_windows(passive, win_size=100, stride=5, avg_drag_duration=avg_drag)
         if len(mouse_wins) >= 10:
             split_idx = int(len(mouse_wins) * 0.8)
             train_m = mouse_wins[:split_idx]
@@ -146,11 +153,6 @@ def train_user_models(subject_id: str):
                 scores = [svm_mouse.score_window(w)["raw_decision"] for w in cal_m]
                 svm_mouse.t_anomaly = max(float(np.percentile(scores, 95)), 0.05)
             svm_mouse.save(subject_dir / "svm_mouse.pkl")
-            
-        # Save mouse task baselines
-        mouse_baselines = extract_mouse_task_baselines(dot_trials, drag_trials)
-        with open(subject_dir / "mouse_baselines.json", 'w') as f:
-            json.dump(mouse_baselines, f)
 
         save_status(subject_id, "completed", 1.0, "All models (SVM, LSTM, TCN, Mouse SVM) successfully trained.")
         print(f"Models successfully trained for '{subject_id}'!")
@@ -252,8 +254,8 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
     lstm_session = lstm_model.score_session(lstm_wins)
     tcn_session = tcn_model.score_session(tcn_wins)
 
-    kb_score = 0.70 * svm_session["mean_score"] + 0.15 * lstm_session["mean_score"] + 0.15 * tcn_session["mean_score"]
-    kb_anomaly_rate = 0.70 * svm_session["anomaly_rate"] + 0.15 * lstm_session["anomaly_rate"] + 0.15 * tcn_session["anomaly_rate"]
+    kb_score = 0.30 * svm_session["mean_score"] + 0.35 * lstm_session["mean_score"] + 0.35 * tcn_session["mean_score"]
+    kb_anomaly_rate = 0.30 * svm_session["anomaly_rate"] + 0.35 * lstm_session["anomaly_rate"] + 0.35 * tcn_session["anomaly_rate"]
 
     # Score Mouse Dynamics
     m_score = 0.0
@@ -267,7 +269,13 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
 
     has_passive_data = False
     if passive_pts and svm_mouse_model.is_trained:
-        passive_wins = extract_mouse_kinematic_windows(passive_pts, win_size=100, stride=25)
+        drag_durs = [t["duration_ms"] for t in drag_trials if "duration_ms" in t]
+        if drag_durs:
+            avg_drag = float(np.mean(drag_durs))
+        else:
+            avg_drag = mouse_baselines.get("drag_duration_mean", 1200.0)
+            
+        passive_wins = extract_mouse_kinematic_windows(passive_pts, win_size=100, stride=25, avg_drag_duration=avg_drag)
         if len(passive_wins) >= 10:
             scores = [svm_mouse_model.score_window(w) for w in passive_wins]
             m_session = svm_mouse_model.score_session(scores)

@@ -37,11 +37,34 @@ def key_cat_onehot(category: str) -> list[float]:
 # Keystroke Sequence Feature Extraction (LSTM/TCN input)
 # ------------------------------------------------------------------ #
 
+def clean_key_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Clean raw key events by filtering out dwell outliers and IQR-based session anomalies."""
+    valid_events = []
+    for e in events:
+        press = e.get("press_ts")
+        release = e.get("release_ts")
+        if press is not None and release is not None:
+            dwell = release - press
+            if 5.0 < dwell < 400.0:
+                valid_events.append(e)
+                
+    if len(valid_events) < 4:
+        return valid_events
+        
+    dwells = [e["release_ts"] - e["press_ts"] for e in valid_events]
+    q25, q75 = np.percentile(dwells, 25), np.percentile(dwells, 75)
+    iqr = q75 - q25
+    upper_bound = q75 + 2.5 * iqr
+    
+    cleaned_events = [e for e in valid_events if (e["release_ts"] - e["press_ts"]) <= upper_bound]
+    return cleaned_events
+
 def extract_keystroke_sequences(events: List[Dict[str, Any]], seq_len: int = 50, stride: int = 25) -> List[np.ndarray]:
     """
     Extract overlapping sequences of shape (seq_len, 10) from raw key events.
     Each event represents: [dwell_ms, flight_ms, digraph_ms, cat_alphanum, cat_symbol, cat_special, cat_space, t_sin, t_cos, freq_weight]
     """
+    events = clean_key_events(events)
     if len(events) < 2:
         return []
 
@@ -60,12 +83,12 @@ def extract_keystroke_sequences(events: List[Dict[str, Any]], seq_len: int = 50,
 
         raw_dwell = a_release - a_press
         raw_flight = b_press - a_release
-        if not (0 < raw_dwell < 2000) or not (-1000 < raw_flight < 5000):
+        if not (-1000 < raw_flight < 5000):
             continue
 
-        dwell_ms = np.clip(raw_dwell, 10.0, 500.0)
+        dwell_ms = np.clip(raw_dwell, 5.0, 400.0)
         flight_ms = np.clip(raw_flight, -150.0, 600.0)
-        digraph_ms = np.clip(b_press - a_press, 10.0, 1000.0)
+        digraph_ms = np.clip(b_press - a_press, 5.0, 1000.0)
 
         cat_a = a["key_category"]
         cat_b = b["key_category"]
@@ -102,23 +125,22 @@ def extract_keystroke_sequences(events: List[Dict[str, Any]], seq_len: int = 50,
 
 def _safe_stats(arr: np.ndarray) -> list[float]:
     if len(arr) < 2:
-        return [float(arr.mean()) if len(arr) else 0.0, 0.0, 0.0, 0.0]
+        return [float(arr.mean()) if len(arr) else 0.0, 0.0]
     return [
         float(np.mean(arr)),
         float(np.std(arr)),
-        float(skew(arr)),
-        float(kurtosis(arr)),
     ]
 
 def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 50, stride: int = 25) -> List[np.ndarray]:
     """
-    Extract overlapping aggregate feature windows of shape (43,) for OC-SVM.
+    Extract overlapping aggregate feature windows of shape (23,) for OC-SVM.
     """
+    events = clean_key_events(events)
     if len(events) < 5:
         return []
 
     # Parse key timings
-    dwells, flights, digraphs, weighted_digraphs = [], [], [], []
+    dwells, flights, digraphs = [], [], []
     cat_dwells = {'alphanum': [], 'symbol': [], 'special': []} # group special/space together for SVM
     ikis = []
     pairs = []
@@ -131,9 +153,7 @@ def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 5
             continue
             
         raw_dwell = release - press
-        if not (0 < raw_dwell < 2000):
-            continue
-        dwell = np.clip(raw_dwell, 10.0, 500.0)
+        dwell = np.clip(raw_dwell, 5.0, 400.0)
 
         cat = evt["key_category"]
         cat_key = cat if cat in ['alphanum', 'symbol'] else 'special'
@@ -153,7 +173,7 @@ def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 5
     while i + win_size <= len(pairs):
         chunk = pairs[i : i + win_size]
         
-        dwells_c, flights_c, digraphs_c, weighted_digraphs_c = [], [], [], []
+        dwells_c, flights_c, digraphs_c = [], [], []
         cat_dwells_c = {'alphanum': [], 'symbol': [], 'special': []}
         ikis_c = []
         
@@ -165,37 +185,50 @@ def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 5
             
             if prev is not None:
                 flight = np.clip(item['press'] - prev['release'], -150.0, 600.0)
-                dgraph = np.clip(item['press'] - prev['press'], 10.0, 1000.0)
-                iki = np.clip(item['press'] - prev['press'], 10.0, 1000.0)
+                dgraph = np.clip(item['press'] - prev['press'], 5.0, 1000.0)
+                iki = np.clip(item['press'] - prev['press'], 5.0, 1000.0)
                 
                 flights_c.append(flight)
                 digraphs_c.append(dgraph)
                 ikis_c.append(iki)
                 
-                pair = (prev['key_id'], item['key_id'])
-                w = DIGRAPH_FREQUENCY.get(pair, 0.3)
-                weighted_digraphs_c.append(dgraph * w)
-                
             prev = item
             
+        # User-mean normalization of timing features
+        mean_d = float(np.mean(dwells_c)) if dwells_c else 80.0
+        mean_d = max(mean_d, 50.0)
+        
+        mean_g = float(np.mean(digraphs_c)) if digraphs_c else 200.0
+        mean_g = max(mean_g, 100.0)
+        
+        # Divide by mean to achieve scale invariance
+        dwells_c_norm = [d / mean_d for d in dwells_c]
+        flights_c_norm = [f / mean_d for f in flights_c]
+        digraphs_c_norm = [d / mean_g for d in digraphs_c]
+        
+        cat_dwells_c_norm = {}
+        for cat in cat_dwells_c:
+            cat_dwells_c_norm[cat] = [d / mean_d for d in cat_dwells_c[cat]] if cat_dwells_c[cat] else []
+            
+        ikis_c_norm = [ik / mean_g for ik in ikis_c] if ikis_c else []
+        
         feature_groups = [
-            np.array(dwells_c),
-            np.array(flights_c) if flights_c else np.array([0.0]),
-            np.array(digraphs_c) if digraphs_c else np.array([0.0]),
-            np.array(weighted_digraphs_c) if weighted_digraphs_c else np.array([0.0]),
-            np.array(cat_dwells_c['alphanum']) if cat_dwells_c['alphanum'] else np.array([0.0]),
-            np.array(cat_dwells_c['symbol']) if cat_dwells_c['symbol'] else np.array([0.0]),
-            np.array(cat_dwells_c['special']) if cat_dwells_c['special'] else np.array([0.0]),
-            np.array(ikis_c) if ikis_c else np.array([0.0]),
+            np.array(dwells_c_norm),
+            np.array(flights_c_norm) if flights_c_norm else np.array([0.0]),
+            np.array(digraphs_c_norm) if digraphs_c_norm else np.array([0.0]),
+            np.array(cat_dwells_c_norm['alphanum']) if cat_dwells_c_norm['alphanum'] else np.array([0.0]),
+            np.array(cat_dwells_c_norm['symbol']) if cat_dwells_c_norm['symbol'] else np.array([0.0]),
+            np.array(cat_dwells_c_norm['special']) if cat_dwells_c_norm['special'] else np.array([0.0]),
+            np.array(ikis_c_norm) if ikis_c_norm else np.array([0.0]),
         ]
         
         feats = []
         for arr in feature_groups:
-            feats.extend(_safe_stats(arr))  # 8 * 4 = 32
+            feats.extend(_safe_stats(arr))  # 7 * 2 = 14
             
         fd_ratio = (np.array(flights_c) / (np.array(dwells_c[:len(flights_c)]) + 1e-6)
                     if flights_c else np.array([1.0]))
-        feats.extend(_safe_stats(fd_ratio))  # + 4 = 36
+        feats.extend(_safe_stats(fd_ratio))  # + 2 = 16
         
         # Time encoding
         t_sin, t_cos = encode_time(chunk[0]['press'])
@@ -210,14 +243,14 @@ def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 5
         duration_min = ((chunk[-1]['press'] - chunk[0]['press']) / 60000.0) or 1e-6
         wpm = (n / 5.0) / duration_min
         
-        feats.extend([t_sin, t_cos, alphanum_ratio, symbol_ratio, special_ratio, wpm / 100.0]) # + 6 = 42
+        feats.extend([t_sin, t_cos, alphanum_ratio, symbol_ratio, special_ratio, wpm / 100.0]) # + 6 = 22
         
         # Digraph coverage
         seen_pairs = set()
         for k in range(1, len(chunk)):
             seen_pairs.add((chunk[k-1]['key_id'], chunk[k]['key_id']))
         coverage = len(seen_pairs & COMMON_DIGRAPHS) / len(COMMON_DIGRAPHS)
-        feats.append(coverage)  # + 1 = 43
+        feats.append(coverage)  # + 1 = 23
         
         aggregates.append(np.array(feats, dtype=np.float32))
         i += stride
@@ -300,8 +333,8 @@ def extract_mouse_aggregates(passive_points: List[Dict[str, Any]],
         drag_success, avg_drag_dur
     ], dtype=np.float32)
 
-def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_size: int = 30, stride: int = 15) -> List[np.ndarray]:
-    """Segment passive points and compute kinematic statistics per window (shape 6)."""
+def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_size: int = 30, stride: int = 15, avg_drag_duration: float = 1200.0) -> List[np.ndarray]:
+    """Segment passive points and compute kinematic statistics per window (shape 7)."""
     if len(passive_points) < 5:
         return []
         
@@ -338,7 +371,8 @@ def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_si
         vec = np.array([
             mean_vals[0], std_vals[0],  # speed
             mean_vals[1], std_vals[1],  # accel
-            mean_vals[2], std_vals[2]   # curvature
+            mean_vals[2], std_vals[2],  # curvature
+            avg_drag_duration
         ], dtype=np.float32)
         windows.append(vec)
         i += stride

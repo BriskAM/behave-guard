@@ -144,6 +144,12 @@ def score_session_endpoint(payload: Dict[str, Any]):
     if not subject_id or not session_data:
         raise HTTPException(status_code=400, detail="Missing 'subject_id' or 'session' data.")
 
+    # Save session data for diagnostics
+    try:
+        save_session(session_data)
+    except Exception as e:
+        print(f"[ERROR] Failed to save score session: {e}")
+
     res = score_session(subject_id, session_data)
     if "error" in res:
         raise HTTPException(status_code=404, detail=res["error"])
@@ -161,6 +167,12 @@ def identify_user_endpoint(payload: Dict[str, Any]):
     
     if not candidate_ids or not session_data:
         raise HTTPException(status_code=400, detail="Missing 'candidate_ids' or 'session' data.")
+
+    # Save session data for diagnostics
+    try:
+        save_session(session_data)
+    except Exception as e:
+        print(f"[ERROR] Failed to save identify session: {e}")
 
     res = identify_user(candidate_ids, session_data)
     if "error" in res:

@@ -12,7 +12,7 @@ class BehaveGuardSVM:
     - Calibrates threshold at 95th percentile of enrollment decision values
     - Scores new windows -> {anomaly_score, verdict}
     """
-    def __init__(self, nu: float = 0.05, kernel: str = 'rbf', gamma: str = 'scale'):
+    def __init__(self, nu: float = 0.02, kernel: str = 'rbf', gamma: float | str = 0.002):
         self.nu = nu
         self.kernel = kernel
         self.gamma = gamma
@@ -23,20 +23,31 @@ class BehaveGuardSVM:
         self.enrollment_mean = None
         self.enrollment_std = None
         self.is_trained = False
-
+ 
     def fit(self, windows: List[np.ndarray]) -> Dict[str, Any]:
         """
         Train the model on genuine user windows.
         windows: list of 43-dim aggregate feature vectors
         """
-        X = np.stack(windows)  # Shape: (N, 43)
+        X = np.stack(windows)  # Shape: (N, 43) or (N, 7)
         X_scaled = self.scaler.fit_transform(X)
+        
+        # Apply standard deviation floor (0.20 for keyboard 23-dim, 0.05 for mouse)
+        scale_floor = 0.20 if X.shape[1] == 23 else 0.05
+        self.scaler.scale_ = np.maximum(self.scaler.scale_, scale_floor)
+        
+        if X.shape[1] == 7:
+            self.scaler.scale_[6] = 200.0
+            
+        # Re-scale using the updated scale_
+        X_scaled = (X - self.scaler.mean_) / self.scaler.scale_
         self.svm.fit(X_scaled)
 
         # Higher decision function output = more normal.
         # We negate the decision function so higher = more anomalous.
         raw_scores = -self.svm.decision_function(X_scaled)
-        self.t_anomaly = max(float(np.percentile(raw_scores, 95)), 0.05)
+        floor_t = 0.15 if X.shape[1] == 23 else 0.05
+        self.t_anomaly = max(float(np.percentile(raw_scores, 95)), floor_t)
         
         self.enrollment_mean = np.mean(X, axis=0)
         self.enrollment_std = np.std(X, axis=0) + 1e-8
@@ -59,11 +70,10 @@ class BehaveGuardSVM:
         
         raw_decision = float(-self.svm.decision_function(X_scaled)[0])
         
-        # Normalize: anomaly_score in [0, 1]
-        if self.t_anomaly > 0:
-            norm_score = raw_decision / (self.t_anomaly * 1.5)
-        else:
-            norm_score = raw_decision / 1.5
+        # Map to anomaly_score in [0, 1] using global calibration thresholds
+        # to ensure scores are comparable across candidate models in identification tasks.
+        calib_thresh = 0.20 if X.shape[1] == 7 else 0.30
+        norm_score = raw_decision / (calib_thresh * 1.5)
         anomaly_score = float(np.clip(norm_score, 0.0, 1.0))
         
         # Verdict logic

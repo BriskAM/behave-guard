@@ -254,9 +254,12 @@ export default function KeyboardTest({
         />
         <div
           onClick={() => inputRef.current?.focus()}
-          className="text-center text-xs text-muted font-mono-tight cursor-text"
+          className="text-center text-xs text-muted font-mono-tight cursor-text mb-4"
         >
           click anywhere here and just start typing
+        </div>
+        <div className="mt-8 p-3 rounded-lg bg-surface border border-border text-center text-xs text-muted max-w-md mx-auto fade-up">
+          💡 <span className="text-amber">Tip:</span> Move your mouse naturally around the screen while typing to help calibrate your passive mouse dynamics profile.
         </div>
       </div>
     </div>

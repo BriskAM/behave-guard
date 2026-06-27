@@ -204,11 +204,10 @@ class BehaveGuardLSTM:
         # Combined score
         combined_score = self.alpha * norm_recon + (1.0 - self.alpha) * norm_latent
 
-        # Map to anomaly_score in [0, 1]
-        if self.t_anomaly > 0:
-            norm_score = combined_score / (self.t_anomaly * 1.5)
-        else:
-            norm_score = combined_score / 1.5
+        # Map to anomaly_score in [0, 1] using a global calibration factor (1.20)
+        # to ensure scores are comparable across candidate models in identification tasks.
+        calib_thresh = 1.20
+        norm_score = combined_score / (calib_thresh * 1.5)
         anomaly_score = float(np.clip(norm_score, 0.0, 1.0))
 
         # Verdict

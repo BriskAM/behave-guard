@@ -337,6 +337,10 @@ export default function VerifyTest({ onBack }: { onBack: () => void }) {
                 className="w-full bg-background border border-border rounded-md px-4 py-3 text-sm focus:outline-none focus:border-text transition font-mono-tight"
               />
 
+              <div className="text-[11px] text-muted leading-relaxed p-2.5 bg-surface-2/50 rounded-lg border border-border/40">
+                💡 <span className="text-amber font-medium">Tip:</span> Move your mouse naturally around the screen while typing to help calibrate your passive mouse dynamics profile.
+              </div>
+
               <div className="flex flex-wrap gap-3 justify-end">
                 <button
                   onClick={resetTest}
