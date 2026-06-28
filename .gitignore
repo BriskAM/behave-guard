@@ -4,12 +4,9 @@
 ._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
-Thumbs.db
 
 # Old implementation files
 behaviour-auth-old/
-Behaveguard-client.xlsx
 
 # Python / virtual envs
 .venv/
