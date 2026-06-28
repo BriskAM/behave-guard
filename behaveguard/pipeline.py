@@ -442,7 +442,7 @@ def identify_user(candidate_ids: List[str], session_data: Dict[str, Any]) -> Dic
     identified_subject = best_candidate["subject_id"] if best_candidate["confidence"] > 0.4 else "unknown"
 
     # Write to a persistent log file
-    log_dir = Path("/Users/akshitmehta/Development/behave-guard/behaveguard/data/logs")
+    log_dir = Path(__file__).resolve().parent / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "identification.log"
     
