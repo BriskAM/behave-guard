@@ -233,6 +233,36 @@ with tab_keys:
         else:
             st.info("No key transitions recorded.")
 
+        # 3. Common English Digraph Speeds
+        st.write("---")
+        st.subheader("⚡ Common English Digraph Timing Speeds")
+        st.markdown("Transition flight times (ms) for high-frequency English digraphs. Typists develop distinct speed variance for specific letter pairs.")
+        
+        common_pairs = [("T", "H"), ("H", "E"), ("I", "N"), ("E", "R"), ("A", "N"), ("R", "E"), ("N", "D"), ("A", "T")]
+        digraph_speeds = []
+        for i in range(len(events)-1):
+            a, b = events[i], events[i+1]
+            p_a, r_a, p_b = a.get("press_ts"), a.get("release_ts"), b.get("press_ts")
+            if p_a is not None and r_a is not None and p_b is not None:
+                fl = p_b - r_a
+                pair = (a["key_id"].upper(), b["key_id"].upper())
+                if pair in common_pairs and 0 < fl < 1000:
+                    digraph_speeds.append({
+                        "Digraph": f"{pair[0]}➔{pair[1]}",
+                        "Flight Time (ms)": fl
+                    })
+        if digraph_speeds:
+            df_dg = pd.DataFrame(digraph_speeds)
+            df_dg_mean = df_dg.groupby("Digraph").mean().reset_index()
+            
+            fig_dg = px.bar(df_dg_mean, x="Digraph", y="Flight Time (ms)",
+                            title="Average Flight Gaps for Common English Digraphs",
+                            color="Flight Time (ms)", color_continuous_scale="Viridis",
+                            template="plotly_dark")
+            st.plotly_chart(fig_dg, use_container_width=True)
+        else:
+            st.info("No common English digraphs typed yet in this profile's session.")
+
 # ------------------------------------------------------------------ #
 # TAB 3: ACTIVE/PASSIVE KINEMATICS
 # ------------------------------------------------------------------ #
@@ -366,6 +396,24 @@ with tab_mouse:
         else:
             st.info("No drag and drop trials recorded.")
 
+    # Click Target Speed vs Accuracy Profile (Fitts' Law dynamics)
+    st.write("---")
+    st.subheader("🎯 Click Target Speed vs. Accuracy Profile")
+    st.markdown("Fitts' Law performance tracking: analyzing cursor velocity relative to precision coordinates on the click-dot trials.")
+    if dot_trials:
+        df_dots = pd.DataFrame(dot_trials)
+        if "travel_time_ms" in df_dots.columns and "error_px" in df_dots.columns:
+            fig_fitts = px.scatter(df_dots, x="travel_time_ms", y="error_px",
+                                   title="Cursor Travel Time vs. Click Error (Precision)",
+                                   labels={"travel_time_ms": "Travel Time (ms)", "error_px": "Click Error Offset (px)"},
+                                   color_discrete_sequence=["#FFD600"], template="plotly_dark",
+                                   marginal_x="histogram", marginal_y="histogram")
+            st.plotly_chart(fig_fitts, use_container_width=True)
+        else:
+            st.info("No detailed click analytics recorded in the database dot trials.")
+    else:
+        st.info("No active click-target game sessions recorded yet.")
+
     # New Row: Passive Mouse Kinematics & Pressure logs
     st.write("---")
     st.subheader("🖱️ Passive Kinematics & Pointer Pressure Tracking")
@@ -463,6 +511,32 @@ with tab_compare:
             showlegend=True, title="Profile Rhythm Polar Signatures (ms)", template="plotly_dark"
         )
         st.plotly_chart(fig_radar, use_container_width=True)
+
+        # Key-Category Hold Profile Comparison
+        st.write("---")
+        st.subheader("⌨️ Key-Category Hold (Dwell) Comparison")
+        st.markdown("Comparing how long different candidates hold down character keys (`alphanumeric`), punctuation keys (`symbol`), and control keys (`special`).")
+        
+        cat_data = []
+        for p in compare_selection:
+            p_events = load_keyboard_events(p)
+            if p_events:
+                df_temp = pd.DataFrame(p_events)
+                if "dwell_ms" in df_temp.columns and "key_category" in df_temp.columns:
+                    df_temp = df_temp[(df_temp["dwell_ms"] > 0) & (df_temp["dwell_ms"] < 1000)]
+                    df_means = df_temp.groupby("key_category")["dwell_ms"].mean().reset_index()
+                    for idx, r in df_means.iterrows():
+                        cat_data.append({
+                            "Subject ID": p,
+                            "Key Category": r["key_category"].capitalize(),
+                            "Average Dwell (ms)": float(r["dwell_ms"])
+                        })
+        if cat_data:
+            df_cat = pd.DataFrame(cat_data)
+            fig_cat = px.bar(df_cat, x="Key Category", y="Average Dwell (ms)", color="Subject ID",
+                             barmode="group", title="Hold Duration (ms) by Key Category across Typists",
+                             color_discrete_sequence=px.colors.qualitative.Pastel, template="plotly_dark")
+            st.plotly_chart(fig_cat, use_container_width=True)
     else:
         st.info("No comparative metrics available yet.")
 
@@ -523,6 +597,58 @@ with tab_models:
             fig_drift.update_layout(title="Simulated style deviation over 30 days (profile needs at least 2 sessions to compute actual drift)",
                                     xaxis_title="Session Index", yaxis_title="Style Deviation score", template="plotly_dark")
             st.plotly_chart(fig_drift, use_container_width=True)
+
+    # PyTorch LSTM Reconstruction Loss Distribution
+    st.write("---")
+    st.subheader("🧠 LSTM Autoencoder Reconstruction Loss Distribution")
+    st.markdown("This shows the distribution of sequence reconstruction errors across typing windows. Low error = high typing rhythm match.")
+    
+    from behaveguard.models.lstm import BehaveGuardLSTM
+    lstm_path = Path("/Users/akshitmehta/Development/behave-guard/behaveguard/models") / selected_profile / "lstm.pkl"
+    if lstm_path.exists():
+        try:
+            p_events = load_keyboard_events(selected_profile)
+            if len(p_events) >= 50:
+                lstm = BehaveGuardLSTM()
+                lstm.load(lstm_path)
+                
+                base_ts_ms = None
+                try:
+                    dt = datetime.fromisoformat(p_events[0]["collected_at"].replace("Z", "+00:00"))
+                    base_ts_ms = dt.timestamp() * 1000.0
+                except Exception:
+                    pass
+                seqs = extract_keystroke_sequences(p_events, seq_len=50, stride=5, base_ts_ms=base_ts_ms)
+                
+                if seqs:
+                    losses = []
+                    for s in seqs:
+                        res = lstm.score_window(s)
+                        losses.append(res["raw_recon"])
+                        
+                    df_losses = pd.DataFrame({"Reconstruction Error": losses})
+                    
+                    fig_recon = px.histogram(df_losses, x="Reconstruction Error", nbins=30,
+                                             title=f"LSTM Sequence Reconstruction Errors (N={len(losses)})",
+                                             color_discrete_sequence=["#9D4EDD"], template="plotly_dark")
+                    
+                    fig_recon.add_vline(x=lstm.t_anomaly_raw, line_width=3, line_dash="dash", line_color="#FF4D4D",
+                                         annotation_text=f"Anomaly Threshold ({lstm.t_anomaly_raw:.2f})", 
+                                         annotation_position="top right")
+                    st.plotly_chart(fig_recon, use_container_width=True)
+                    st.markdown("""
+                    > [!NOTE]
+                    > Typing windows whose reconstruction error falls to the **left** of the red dashed line are classified as **legitimate**. 
+                    > Windows falling to the **right** are flagged as anomalies.
+                    """)
+                else:
+                    st.info("No valid sequence windows could be extracted for this session.")
+            else:
+                st.info("Profile has not accumulated enough keys (minimum 50) to evaluate sequence reconstruction.")
+        except Exception as e:
+            st.error(f"Failed to evaluate LSTM sequence loss: {str(e)}")
+    else:
+        st.info("No trained LSTM model baseline found for this profile yet.")
 
     # Keyboard SVM feature consistency analysis
     st.write("---")
