@@ -124,15 +124,21 @@ with tab_summary:
     
     # Overview metrics calculation
     if len(events) > 0:
-        times = [e["press_ts"] for e in events]
+        times = [e["press_ts"] for e in events if e.get("press_ts") is not None and not np.isnan(e.get("press_ts"))]
         span_min = (max(times) - min(times)) / 60000.0 if len(times) > 1 else 1e-6
         avg_wpm = (len(events) / 5.0) / max(span_min, 0.1)
-        dwells = [e["dwell_ms"] for e in events]
-        avg_dwell = np.mean(dwells)
+        dwells = [e["dwell_ms"] for e in events if e.get("dwell_ms") is not None and not np.isnan(e.get("dwell_ms"))]
+        avg_dwell = np.mean(dwells) if dwells else 0.0
         
         flights = []
         for i in range(len(events)-1):
-            fl = events[i+1]["press_ts"] - events[i]["release_ts"]
+            a, b = events[i], events[i+1]
+            p_a = a.get("press_ts")
+            r_a = a.get("release_ts")
+            p_b = b.get("press_ts")
+            if p_a is None or np.isnan(p_a) or r_a is None or np.isnan(r_a) or p_b is None or np.isnan(p_b):
+                continue
+            fl = p_b - r_a
             if 0 < fl < 2000:
                 flights.append(fl)
         avg_flight = np.mean(flights) if flights else 0.0
@@ -191,7 +197,12 @@ with tab_keys:
         bigrams = []
         for i in range(len(events)-1):
             a, b = events[i], events[i+1]
-            fl = b["press_ts"] - a["release_ts"]
+            p_a = a.get("press_ts")
+            r_a = a.get("release_ts")
+            p_b = b.get("press_ts")
+            if p_a is None or np.isnan(p_a) or r_a is None or np.isnan(r_a) or p_b is None or np.isnan(p_b):
+                continue
+            fl = p_b - r_a
             if 0 < fl < 1000:
                 bigrams.append({
                     "First": a["key_id"].upper(),
@@ -395,15 +406,26 @@ with tab_compare:
     for p in compare_selection:
         p_events = load_keyboard_events(p)
         if p_events:
-            p_dwells = [e["dwell_ms"] for e in p_events]
+            p_times = [e["press_ts"] for e in p_events if e.get("press_ts") is not None and not np.isnan(e.get("press_ts"))]
+            span_min = (max(p_times) - min(p_times)) / 60000.0 if len(p_times) > 1 else 1e-6
+            p_wpm = (len(p_events) / 5.0) / max(span_min, 0.1)
+            
+            p_dwells = [e["dwell_ms"] for e in p_events if e.get("dwell_ms") is not None and not np.isnan(e.get("dwell_ms"))]
             p_flights = []
             for i in range(len(p_events)-1):
-                fl = p_events[i+1]["press_ts"] - p_events[i]["release_ts"]
+                a, b = p_events[i], p_events[i+1]
+                p_a = a.get("press_ts")
+                r_a = a.get("release_ts")
+                p_b = b.get("press_ts")
+                if p_a is None or np.isnan(p_a) or r_a is None or np.isnan(r_a) or p_b is None or np.isnan(p_b):
+                    continue
+                fl = p_b - r_a
                 if 0 < fl < 2000:
                     p_flights.append(fl)
             
             comp_data.append({
                 "Subject ID": p,
+                "WPM": float(p_wpm),
                 "Avg Dwell (Hold)": float(np.mean(p_dwells)) if p_dwells else 0.0,
                 "Avg Flight (Gap)": float(np.mean(p_flights)) if p_flights else 0.0,
                 "Dwell Std": float(np.std(p_dwells)) if p_dwells else 0.0,
@@ -416,7 +438,7 @@ with tab_compare:
         
         # Radar Chart comparison
         fig_radar = go.Figure()
-        categories = ["Avg Dwell (Hold)", "Avg Flight (Gap)", "Dwell Std", "Flight Std"]
+        categories = ["WPM", "Avg Dwell (Hold)", "Avg Flight (Gap)", "Dwell Std", "Flight Std"]
         
         for idx, row in df_comp.iterrows():
             values = [row[cat] for cat in categories]
