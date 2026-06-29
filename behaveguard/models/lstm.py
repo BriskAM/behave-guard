@@ -115,6 +115,8 @@ class BehaveGuardLSTM:
         
         X_flat = X_num.reshape(-1, self.feature_dim)
         self.scaler.fit(X_flat)
+        # Apply standard deviation floor (0.20) to prevent division by near-zero variance
+        self.scaler.scale_ = np.maximum(self.scaler.scale_, 0.20)
         X_num_scaled = self.scaler.transform(X_flat).reshape(N, self.seq_len, self.feature_dim)
         X_scaled = np.concatenate([X_num_scaled, X_cat], axis=-1)
 
@@ -204,6 +206,8 @@ class BehaveGuardLSTM:
         numerical = sequence[:, :10]
         categorical = sequence[:, 10:11]
         
+        # Apply standard deviation floor (0.20) to prevent division by near-zero variance
+        self.scaler.scale_ = np.maximum(self.scaler.scale_, 0.20)
         num_scaled = self.scaler.transform(numerical)
         seq_scaled = np.concatenate([num_scaled, categorical], axis=-1)
         
