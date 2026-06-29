@@ -23,6 +23,15 @@ from behaveguard.features import (
 )
 from behaveguard.pipeline import get_training_status
 
+def is_valid_num(val):
+    try:
+        if val is None:
+            return False
+        f = float(val)
+        return not np.isnan(f) and not np.isinf(f)
+    except (ValueError, TypeError):
+        return False
+
 # Page config
 st.set_page_config(
     page_title="BehaveGuard Operations Center",
@@ -515,6 +524,64 @@ with tab_models:
                                     xaxis_title="Session Index", yaxis_title="Style Deviation score", template="plotly_dark")
             st.plotly_chart(fig_drift, use_container_width=True)
 
+    # Keyboard SVM feature consistency analysis
+    st.write("---")
+    st.subheader("🔍 Keyboard SVM Feature Consistency Analysis")
+    st.markdown("""
+    The One-Class SVM baseline models your typing consistency across 23 different timing and pattern features.
+    Features with **lower standard deviation scales** indicate where your typing rhythm is the most consistent and unique!
+    """)
+    
+    from behaveguard.models.svm import BehaveGuardSVM
+    svm_path = Path("/Users/akshitmehta/Development/behave-guard/behaveguard/models") / selected_profile / "svm.pkl"
+    if svm_path.exists():
+        try:
+            svm = BehaveGuardSVM()
+            svm.load(svm_path)
+            
+            features_23 = [
+                "Dwell Mean", "Dwell Std", "Flight Mean", "Flight Std", 
+                "Digraph Mean", "Digraph Std", "Alphanum Dwell Mean", "Alphanum Dwell Std", 
+                "Symbol Dwell Mean", "Symbol Dwell Std", "Special Dwell Mean", "Special Dwell Std", 
+                "IKI Mean", "IKI Std", "FD Ratio Mean", "FD Ratio Std", 
+                "Cyclical Time Sin", "Cyclical Time Cos", "Alphanum Ratio", "Symbol Ratio", 
+                "Special Ratio", "WPM Metric", "Digraph Coverage"
+            ]
+            
+            if hasattr(svm.scaler, 'scale_') and len(svm.scaler.scale_) == 23:
+                df_features = pd.DataFrame({
+                    "Feature": features_23,
+                    "Consistency Scale (Std Dev)": svm.scaler.scale_,
+                    "Baseline Mean": svm.scaler.mean_
+                }).sort_values("Consistency Scale (Std Dev)").reset_index(drop=True)
+                
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    fig_scales = px.bar(df_features, x="Consistency Scale (Std Dev)", y="Feature", orientation="h",
+                                         title="Rhythm Consistency (Lower = More Consistent / Stable)",
+                                         color="Consistency Scale (Std Dev)", color_continuous_scale="Viridis_r",
+                                         template="plotly_dark")
+                    fig_scales.update_layout(yaxis=dict(autorange="reversed"))
+                    st.plotly_chart(fig_scales, use_container_width=True)
+                    
+                with col_f2:
+                    st.markdown("**Top 5 Most Consistent Typing Traits:**")
+                    for i in range(min(5, len(df_features))):
+                        row = df_features.iloc[i]
+                        st.markdown(f"{i+1}. **{row['Feature']}** (Scale Variance: `{row['Consistency Scale (Std Dev)']:.2f}`)")
+                    
+                    st.markdown("""
+                    > [!NOTE]
+                    > During model calibration, a scale floor of `0.20` is enforced on keyboard aggregates to prevent overfitting.
+                    > Traits resting exactly at `0.20` represent highly regular keystroke patterns.
+                    """)
+            else:
+                st.info("The loaded SVM profile does not contain 23 aggregates features.")
+        except Exception as e:
+            st.error(f"Failed to render SVM feature dynamics: {str(e)}")
+    else:
+        st.info("No trained keyboard SVM model baseline found for this profile yet.")
+
 # ------------------------------------------------------------------ #
 # TAB 6: BIOMETRIC CLUSTER SPACE
 # ------------------------------------------------------------------ #
@@ -539,7 +606,8 @@ with tab_clusters:
         st.warning("Not enough aggregate windows across enrolled profiles to run Principal Component Analysis (PCA). Keep typing in the client!")
     else:
         X = np.stack(all_features)
-        X_scaled = StandardScaler().fit_transform(X)
+        scaler_all = StandardScaler()
+        X_scaled = scaler_all.fit_transform(X)
         
         pca = PCA(n_components=2)
         X_pca = pca.fit_transform(X_scaled)
@@ -549,8 +617,48 @@ with tab_clusters:
         
         fig = px.scatter(df_pca, x="Principal Component 1", y="Principal Component 2", 
                          color="Subject ID", 
-                         title="PCA rhythm space grouping",
+                         title="PCA rhythm space grouping with SVM Decision Boundary",
                          labels={"Principal Component 1": "PC1 (Rhythm Speed)", "Principal Component 2": "PC2 (Digraph Variance)"},
                          color_discrete_sequence=px.colors.qualitative.Bold, template="plotly_dark")
+        
+        # Load selected user's One-Class SVM decision boundary
+        from behaveguard.models.svm import BehaveGuardSVM
+        svm_path = Path("/Users/akshitmehta/Development/behave-guard/behaveguard/models") / selected_profile / "svm.pkl"
+        if svm_path.exists():
+            try:
+                svm = BehaveGuardSVM()
+                svm.load(svm_path)
+                
+                if X.shape[1] == 23:
+                    # Meshgrid bounding space
+                    x_min, x_max = X_pca[:, 0].min() - 1, X_pca[:, 0].max() + 1
+                    y_min, y_max = X_pca[:, 1].min() - 1, X_pca[:, 1].max() + 1
+                    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
+                    grid_pca = np.c_[xx.ravel(), yy.ravel()]
+                    
+                    # 1. Project back to 23D scaled space via PCA inverse
+                    grid_23d_scaled = pca.inverse_transform(grid_pca)
+                    # 2. De-scale to raw values using the overall scaler
+                    grid_23d_raw = scaler_all.inverse_transform(grid_23d_scaled)
+                    # 3. Re-scale using the selected user's trained SVM scaler
+                    grid_23d_svm_scaled = (grid_23d_raw - svm.scaler.mean_) / svm.scaler.scale_
+                    
+                    # 4. Evaluate One-Class SVM decision boundary (outputs > 0 inside the boundary)
+                    z = svm.svm.decision_function(grid_23d_svm_scaled)
+                    z = z.reshape(xx.shape)
+                    
+                    # Overlay boundary contour line at value = 0.0
+                    fig.add_trace(go.Contour(
+                        x=np.linspace(x_min, x_max, 100),
+                        y=np.linspace(y_min, y_max, 100),
+                        z=z,
+                        showscale=False,
+                        contours=dict(start=0.0, end=0.0, size=1),
+                        line=dict(color="#00E5FF", width=3, dash="dash"),
+                        name=f"{selected_profile} SVM Boundary (Genuine Zone)"
+                    ))
+            except Exception as ex:
+                st.sidebar.error(f"SVM Boundary Overlay Error: {str(ex)}")
+                
         fig.update_traces(marker=dict(size=8, opacity=0.8))
         st.plotly_chart(fig, use_container_width=True)
