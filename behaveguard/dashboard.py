@@ -621,45 +621,40 @@ with tab_clusters:
                          labels={"Principal Component 1": "PC1 (Rhythm Speed)", "Principal Component 2": "PC2 (Digraph Variance)"},
                          color_discrete_sequence=px.colors.qualitative.Bold, template="plotly_dark")
         
-        # Load selected user's One-Class SVM decision boundary
-        from behaveguard.models.svm import BehaveGuardSVM
-        svm_path = Path("/Users/akshitmehta/Development/behave-guard/behaveguard/models") / selected_profile / "svm.pkl"
-        if svm_path.exists():
-            try:
-                svm = BehaveGuardSVM()
-                svm.load(svm_path)
+        # Plot 2D One-Class SVM decision boundary trained on the selected user's PCA coordinates
+        # to represent their genuine zone in the 2D projection plane.
+        try:
+            X_pca_selected = X_pca[np.array(labels) == selected_profile]
+            if len(X_pca_selected) >= 5:
+                # Meshgrid bounding space
+                x_min, x_max = X_pca[:, 0].min() - 1, X_pca[:, 0].max() + 1
+                y_min, y_max = X_pca[:, 1].min() - 1, X_pca[:, 1].max() + 1
+                xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
+                grid_pca = np.c_[xx.ravel(), yy.ravel()]
                 
-                if X.shape[1] == 23:
-                    # Meshgrid bounding space
-                    x_min, x_max = X_pca[:, 0].min() - 1, X_pca[:, 0].max() + 1
-                    y_min, y_max = X_pca[:, 1].min() - 1, X_pca[:, 1].max() + 1
-                    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
-                    grid_pca = np.c_[xx.ravel(), yy.ravel()]
-                    
-                    # 1. Project back to 23D scaled space via PCA inverse
-                    grid_23d_scaled = pca.inverse_transform(grid_pca)
-                    # 2. De-scale to raw values using the overall scaler
-                    grid_23d_raw = scaler_all.inverse_transform(grid_23d_scaled)
-                    # 3. Re-scale using the selected user's trained SVM scaler
-                    grid_23d_svm_scaled = (grid_23d_raw - svm.scaler.mean_) / svm.scaler.scale_
-                    
-                    # 4. Evaluate One-Class SVM decision boundary (outputs > 0 inside the boundary)
-                    z = svm.svm.decision_function(grid_23d_svm_scaled)
-                    z = z.reshape(xx.shape)
-                    
-                    # Overlay boundary contour line at value = 0.0
-                    fig.add_trace(go.Contour(
-                        x=np.linspace(x_min, x_max, 100),
-                        y=np.linspace(y_min, y_max, 100),
-                        z=z,
-                        showscale=False,
-                        contours=dict(start=0.0, end=0.0, size=1),
-                        contours_coloring='lines',
-                        line=dict(color="#00E5FF", width=3, dash="dash"),
-                        name=f"{selected_profile} SVM Boundary (Genuine Zone)"
-                    ))
-            except Exception as ex:
-                st.sidebar.error(f"SVM Boundary Overlay Error: {str(ex)}")
+                # Fit a 2D OneClassSVM to align with the visual 2D PCA representation
+                from sklearn.svm import OneClassSVM
+                svm_2d = OneClassSVM(nu=0.05, kernel='rbf', gamma='scale')
+                svm_2d.fit(X_pca_selected)
+                
+                z = svm_2d.decision_function(grid_pca)
+                z = z.reshape(xx.shape)
+                
+                # Overlay boundary contour line at value = 0.0
+                fig.add_trace(go.Contour(
+                    x=np.linspace(x_min, x_max, 100),
+                    y=np.linspace(y_min, y_max, 100),
+                    z=z,
+                    showscale=False,
+                    contours=dict(start=0.0, end=0.0, size=1),
+                    contours_coloring='lines',
+                    line=dict(color="#00E5FF", width=3, dash="dash"),
+                    name=f"{selected_profile} SVM Boundary (Genuine Zone)"
+                ))
+            else:
+                st.sidebar.warning(f"Not enough aggregate windows for {selected_profile} to compute 2D boundary.")
+        except Exception as ex:
+            st.sidebar.error(f"SVM Boundary Overlay Error: {str(ex)}")
                 
         for trace in fig.data:
             if hasattr(trace, 'marker') and trace.type == 'scatter':
