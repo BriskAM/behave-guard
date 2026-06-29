@@ -654,6 +654,7 @@ with tab_clusters:
                         z=z,
                         showscale=False,
                         contours=dict(start=0.0, end=0.0, size=1),
+                        contours_coloring='lines',
                         line=dict(color="#00E5FF", width=3, dash="dash"),
                         name=f"{selected_profile} SVM Boundary (Genuine Zone)"
                     ))
@@ -662,7 +663,8 @@ with tab_clusters:
                 
         for trace in fig.data:
             if hasattr(trace, 'marker') and trace.type == 'scatter':
-                trace.marker.size = 8
-                trace.marker.opacity = 0.8
+                trace.marker.size = 10
+                trace.marker.opacity = 0.9
+                trace.marker.line = dict(width=1.0, color='white')
                 
         st.plotly_chart(fig, use_container_width=True)
