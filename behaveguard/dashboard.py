@@ -136,7 +136,7 @@ with tab_summary:
         times = [e["press_ts"] for e in events if e.get("press_ts") is not None and not np.isnan(e.get("press_ts"))]
         span_min = (max(times) - min(times)) / 60000.0 if len(times) > 1 else 1e-6
         avg_wpm = (len(events) / 5.0) / max(span_min, 0.1)
-        dwells = [e["dwell_ms"] for e in events if e.get("dwell_ms") is not None and not np.isnan(e.get("dwell_ms"))]
+        dwells = [e["dwell_ms"] for e in events if is_valid_num(e.get("dwell_ms")) and 0 < e.get("dwell_ms") < 1000]
         avg_dwell = np.mean(dwells) if dwells else 0.0
         
         flights = []
@@ -419,7 +419,7 @@ with tab_compare:
             span_min = (max(p_times) - min(p_times)) / 60000.0 if len(p_times) > 1 else 1e-6
             p_wpm = (len(p_events) / 5.0) / max(span_min, 0.1)
             
-            p_dwells = [e["dwell_ms"] for e in p_events if e.get("dwell_ms") is not None and not np.isnan(e.get("dwell_ms"))]
+            p_dwells = [e["dwell_ms"] for e in p_events if is_valid_num(e.get("dwell_ms")) and 0 < e.get("dwell_ms") < 1000]
             p_flights = []
             for i in range(len(p_events)-1):
                 a, b = p_events[i], p_events[i+1]
@@ -660,5 +660,9 @@ with tab_clusters:
             except Exception as ex:
                 st.sidebar.error(f"SVM Boundary Overlay Error: {str(ex)}")
                 
-        fig.update_traces(marker=dict(size=8, opacity=0.8))
+        for trace in fig.data:
+            if hasattr(trace, 'marker') and trace.type == 'scatter':
+                trace.marker.size = 8
+                trace.marker.opacity = 0.8
+                
         st.plotly_chart(fig, use_container_width=True)
