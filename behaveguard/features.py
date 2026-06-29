@@ -3,6 +3,8 @@ import time
 import math
 from typing import List, Dict, Any, Optional
 from scipy.stats import skew, kurtosis
+from datetime import datetime
+
 
 # Constants
 WINDOW_SIZE = 50
@@ -23,9 +25,49 @@ COMMON_DIGRAPHS = {
 
 DIGRAPH_FREQUENCY = {d: 1.0 for d in COMMON_DIGRAPHS}
 
-def encode_time(ts_ms: float) -> tuple[float, float]:
-    """Encode timestamp (in ms) as cyclical time-of-day features. (Disabled to avoid scaling explosion)."""
-    return 0.0, 0.0
+def get_key_char_index(key_id: str) -> int:
+    """Map key_id to a small vocabulary integer index in range [0, 134] for embedding layers."""
+    if not key_id:
+        return 128
+    key_lower = key_id.lower()
+    if len(key_lower) == 1:
+        val = ord(key_lower)
+        if 0 <= val <= 127:
+            return val
+    special_mapping = {
+        "space": 32,
+        "enter": 10,
+        "backspace": 8,
+        "tab": 9,
+        "shift": 129,
+        "control": 130,
+        "alt": 131,
+        "meta": 132,
+        "capslock": 133,
+        "escape": 27
+    }
+    return special_mapping.get(key_lower, 128)
+
+def get_absolute_ts(ts_ms: float, base_ts_ms: Optional[float] = None) -> float:
+    """Determine absolute epoch ms timestamp from raw timestamp and optional base."""
+    if ts_ms > 1e11:  # already epoch ms
+        return ts_ms
+    if base_ts_ms is not None:
+        return base_ts_ms + ts_ms
+    return time.time() * 1000.0 + ts_ms
+
+def encode_time(ts_ms: float, base_ts_ms: Optional[float] = None) -> tuple[float, float]:
+    """Encode timestamp (in ms) as cyclical time-of-day features using local time."""
+    abs_ts = get_absolute_ts(ts_ms, base_ts_ms)
+    struct = time.localtime(abs_ts / 1000.0)
+    hour = struct.tm_hour
+    minute = struct.tm_min
+    second = struct.tm_sec
+    hour_fraction = hour + (minute / 60.0) + (second / 3600.0)
+    
+    t_sin = math.sin(2 * math.pi * hour_fraction / 24.0)
+    t_cos = math.cos(2 * math.pi * hour_fraction / 24.0)
+    return t_sin, t_cos
 
 def key_cat_onehot(category: str) -> list[float]:
     vec = [0.0] * 4
@@ -59,10 +101,10 @@ def clean_key_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     cleaned_events = [e for e in valid_events if (e["release_ts"] - e["press_ts"]) <= upper_bound]
     return cleaned_events
 
-def extract_keystroke_sequences(events: List[Dict[str, Any]], seq_len: int = 50, stride: int = 25) -> List[np.ndarray]:
+def extract_keystroke_sequences(events: List[Dict[str, Any]], seq_len: int = 50, stride: int = 25, base_ts_ms: Optional[float] = None) -> List[np.ndarray]:
     """
-    Extract overlapping sequences of shape (seq_len, 10) from raw key events.
-    Each event represents: [dwell_ms, flight_ms, digraph_ms, cat_alphanum, cat_symbol, cat_special, cat_space, t_sin, t_cos, freq_weight]
+    Extract overlapping sequences of shape (seq_len, 11) from raw key events.
+    Each event represents: [dwell_ms, flight_ms, digraph_ms, cat_alphanum, cat_symbol, cat_special, cat_space, t_sin, t_cos, freq_weight, key_code_idx]
     """
     events = clean_key_events(events)
     if len(events) < 2:
@@ -95,8 +137,21 @@ def extract_keystroke_sequences(events: List[Dict[str, Any]], seq_len: int = 50,
         pair_key = (a.get("key_id", ""), b.get("key_id", ""))
         weight = DIGRAPH_FREQUENCY.get(pair_key, 0.3)
         
-        t_sin, t_cos = encode_time(a_release)
+        # get base timestamp from event a if present
+        evt_base = a.get("collected_at")
+        evt_base_ms = None
+        if evt_base:
+            try:
+                dt = datetime.fromisoformat(evt_base.replace("Z", "+00:00"))
+                evt_base_ms = dt.timestamp() * 1000.0
+            except Exception:
+                pass
+        if evt_base_ms is None:
+            evt_base_ms = base_ts_ms
+
+        t_sin, t_cos = encode_time(a_release, evt_base_ms)
         onehot = key_cat_onehot(cat_a)
+        key_code_idx = get_key_char_index(a.get("key_id", ""))
         
         vec = np.array([
             dwell_ms,
@@ -105,7 +160,8 @@ def extract_keystroke_sequences(events: List[Dict[str, Any]], seq_len: int = 50,
             *onehot,
             t_sin,
             t_cos,
-            weight
+            weight,
+            float(key_code_idx)
         ], dtype=np.float32)
         pairs.append(vec)
 
@@ -131,7 +187,7 @@ def _safe_stats(arr: np.ndarray) -> list[float]:
         float(np.std(arr)),
     ]
 
-def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 50, stride: int = 25) -> List[np.ndarray]:
+def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 50, stride: int = 25, base_ts_ms: Optional[float] = None) -> List[np.ndarray]:
     """
     Extract overlapping aggregate feature windows of shape (23,) for OC-SVM.
     """
@@ -164,7 +220,8 @@ def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 5
             'cat': cat_key,
             'press': press,
             'release': release,
-            'key_id': evt.get("key_id", "")
+            'key_id': evt.get("key_id", ""),
+            'collected_at': evt.get("collected_at")
         })
 
     # Slide window
@@ -231,7 +288,18 @@ def extract_keystroke_aggregates(events: List[Dict[str, Any]], win_size: int = 5
         feats.extend(_safe_stats(fd_ratio))  # + 2 = 16
         
         # Time encoding
-        t_sin, t_cos = encode_time(chunk[0]['press'])
+        evt_base = chunk[0].get("collected_at")
+        evt_base_ms = None
+        if evt_base:
+            try:
+                dt = datetime.fromisoformat(evt_base.replace("Z", "+00:00"))
+                evt_base_ms = dt.timestamp() * 1000.0
+            except Exception:
+                pass
+        if evt_base_ms is None:
+            evt_base_ms = base_ts_ms
+
+        t_sin, t_cos = encode_time(chunk[0]['press'], evt_base_ms)
         
         # Ratios
         n = len(chunk)
@@ -334,7 +402,7 @@ def extract_mouse_aggregates(passive_points: List[Dict[str, Any]],
     ], dtype=np.float32)
 
 def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_size: int = 30, stride: int = 15, avg_drag_duration: float = 1200.0) -> List[np.ndarray]:
-    """Segment passive points and compute kinematic statistics per window (shape 7)."""
+    """Segment passive points and compute kinematic statistics per window (shape 9, supporting pointer pressure)."""
     if len(passive_points) < 5:
         return []
         
@@ -358,7 +426,13 @@ def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_si
         norm = math.hypot(v1[0], v1[1]) * math.hypot(v2[0], v2[1])
         curv = cross / norm if norm > 1e-6 else 0.0
         
-        events_data.append([speed, accel, curv])
+        # Capture optional pressure, default to 0.5
+        pressure = p2.get("pressure")
+        if pressure is None or pressure == 0.0:
+            pressure = 0.5
+        pressure = float(np.clip(pressure, 0.0, 1.0))
+        
+        events_data.append([speed, accel, curv, pressure])
 
     windows = []
     i = 0
@@ -372,12 +446,92 @@ def extract_mouse_kinematic_windows(passive_points: List[Dict[str, Any]], win_si
             mean_vals[0], std_vals[0],  # speed
             mean_vals[1], std_vals[1],  # accel
             mean_vals[2], std_vals[2],  # curvature
+            mean_vals[3], std_vals[3],  # pressure
             avg_drag_duration
         ], dtype=np.float32)
         windows.append(vec)
         i += stride
         
     return windows
+
+def extract_trial_path_kinematics(path: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Extract kinematics from an active task trial's coordinates path."""
+    if len(path) < 3:
+        return {
+            "curvature": 1.0,
+            "peak_velocity": 0.0,
+            "submovements": 0,
+            "tremor": 0.0,
+            "direction_reversals": 0
+        }
+    
+    lengths = []
+    velocities = []
+    accelerations = []
+    
+    start_x, start_y = path[0]["x"], path[0]["y"]
+    end_x, end_y = path[-1]["x"], path[-1]["y"]
+    dx_tot = end_x - start_x
+    dy_tot = end_y - start_y
+    total_euclidean = math.hypot(dx_tot, dy_tot) or 1e-6
+    
+    proj_prev = 0.0
+    reversals = 0
+    total_length = 0.0
+    
+    for i in range(1, len(path)):
+        p1, p2 = path[i-1], path[i]
+        dt = p2["ts"] - p1["ts"]  # ms
+        if dt <= 0.001:
+            continue
+        
+        dx = p2["x"] - p1["x"]
+        dy = p2["y"] - p1["y"]
+        dist = math.hypot(dx, dy)
+        total_length += dist
+        
+        vel = dist / dt  # px/ms
+        velocities.append(vel)
+        
+        proj = (dx * dx_tot + dy * dy_tot) / total_euclidean
+        if i > 1:
+            if (proj_prev > 0 and proj < 0) or (proj_prev < 0 and proj > 0):
+                reversals += 1
+        proj_prev = proj
+        
+    if len(velocities) < 2:
+        return {
+            "curvature": 1.0,
+            "peak_velocity": 0.0,
+            "submovements": 0,
+            "tremor": 0.0,
+            "direction_reversals": 0
+        }
+        
+    curvature = total_length / total_euclidean
+    peak_velocity = float(np.max(velocities))
+    
+    # Submovements: inflection points in acceleration
+    submovements = 0
+    for i in range(1, len(velocities)):
+        accel = velocities[i] - velocities[i-1]
+        accelerations.append(accel)
+    for i in range(1, len(accelerations)):
+        if (accelerations[i-1] > 0 and accelerations[i] < 0):
+            submovements += 1
+            
+    # Endpoint tremor: std dev of velocity in final 15% of path
+    cutoff = int(len(velocities) * 0.85)
+    endpoint_vels = velocities[cutoff:]
+    tremor = float(np.std(endpoint_vels)) if len(endpoint_vels) > 1 else 0.0
+    
+    return {
+        "curvature": float(np.clip(curvature, 1.0, 10.0)),
+        "peak_velocity": float(np.clip(peak_velocity, 0.0, 100.0)),
+        "submovements": int(submovements),
+        "tremor": float(np.clip(tremor, 0.0, 50.0)),
+        "direction_reversals": int(reversals)
+    }
 
 def _robust_mean_std(values: List[float], fallback_mean: float, fallback_std: float) -> tuple[float, float]:
     if not values:
@@ -395,7 +549,7 @@ def _robust_mean_std(values: List[float], fallback_mean: float, fallback_std: fl
     return float(np.mean(filtered)), float(np.std(filtered)) + 1e-8
 
 def extract_mouse_task_baselines(dot_trials: List[Dict[str, Any]], drag_trials: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Compute baseline statistics for dot clicking and drag task metrics."""
+    """Compute baseline statistics for dot clicking and drag task metrics, including active path kinematics."""
     dot_travels = [t["travel_time_ms"] for t in dot_trials if "travel_time_ms" in t]
     dot_errors = [t["error_px"] for t in dot_trials if "error_px" in t]
     drag_durs = [t["duration_ms"] for t in drag_trials if "duration_ms" in t]
@@ -407,6 +561,52 @@ def extract_mouse_task_baselines(dot_trials: List[Dict[str, Any]], drag_trials: 
     drag_success = [1.0 if t["success"] else 0.0 for t in drag_trials if "success" in t]
     ds_mean = float(np.mean(drag_success)) if drag_success else 1.0
     
+    # Path kinematics for dots
+    dot_curvatures = []
+    dot_peak_vels = []
+    dot_submovements = []
+    dot_tremors = []
+    dot_reversals = []
+    
+    for t in dot_trials:
+        path = t.get("path", [])
+        if path:
+            k = extract_trial_path_kinematics(path)
+            dot_curvatures.append(k["curvature"])
+            dot_peak_vels.append(k["peak_velocity"])
+            dot_submovements.append(k["submovements"])
+            dot_tremors.append(k["tremor"])
+            dot_reversals.append(k["direction_reversals"])
+            
+    # Path kinematics for drags
+    drag_curvatures = []
+    drag_peak_vels = []
+    drag_submovements = []
+    drag_tremors = []
+    drag_reversals = []
+    
+    for t in drag_trials:
+        path = t.get("path", [])
+        if path:
+            k = extract_trial_path_kinematics(path)
+            drag_curvatures.append(k["curvature"])
+            drag_peak_vels.append(k["peak_velocity"])
+            drag_submovements.append(k["submovements"])
+            drag_tremors.append(k["tremor"])
+            drag_reversals.append(k["direction_reversals"])
+
+    dc_mean, dc_std = _robust_mean_std(dot_curvatures, 1.2, 0.3)
+    dpv_mean, dpv_std = _robust_mean_std(dot_peak_vels, 5.0, 2.0)
+    dsm_mean, dsm_std = _robust_mean_std(dot_submovements, 2.0, 1.0)
+    dtr_mean, dtr_std = _robust_mean_std(dot_tremors, 0.5, 0.3)
+    dr_mean, dr_std = _robust_mean_std(dot_reversals, 0.0, 0.5)
+
+    dgc_mean, dgc_std = _robust_mean_std(drag_curvatures, 1.2, 0.3)
+    dgpv_mean, dgpv_std = _robust_mean_std(drag_peak_vels, 5.0, 2.0)
+    dgsm_mean, dgsm_std = _robust_mean_std(drag_submovements, 2.0, 1.0)
+    dgtr_mean, dgtr_std = _robust_mean_std(drag_tremors, 0.5, 0.3)
+    dgr_mean, dgr_std = _robust_mean_std(drag_reversals, 0.0, 0.5)
+    
     return {
         "dot_travel_mean": dt_mean,
         "dot_travel_std": dt_std,
@@ -414,7 +614,29 @@ def extract_mouse_task_baselines(dot_trials: List[Dict[str, Any]], drag_trials: 
         "dot_error_std": de_std,
         "drag_duration_mean": dd_mean,
         "drag_duration_std": dd_std,
-        "drag_success_mean": ds_mean
+        "drag_success_mean": ds_mean,
+        
+        "dot_curvature_mean": dc_mean,
+        "dot_curvature_std": dc_std,
+        "dot_peak_velocity_mean": dpv_mean,
+        "dot_peak_velocity_std": dpv_std,
+        "dot_submovements_mean": dsm_mean,
+        "dot_submovements_std": dsm_std,
+        "dot_tremor_mean": dtr_mean,
+        "dot_tremor_std": dtr_std,
+        "dot_reversals_mean": dr_mean,
+        "dot_reversals_std": dr_std,
+
+        "drag_curvature_mean": dgc_mean,
+        "drag_curvature_std": dgc_std,
+        "drag_peak_velocity_mean": dgpv_mean,
+        "drag_peak_velocity_std": dgpv_std,
+        "drag_submovements_mean": dgsm_mean,
+        "drag_submovements_std": dgsm_std,
+        "drag_tremor_mean": dgtr_mean,
+        "drag_tremor_std": dgtr_std,
+        "drag_reversals_mean": dgr_mean,
+        "drag_reversals_std": dgr_std,
     }
 
 class Normalizer:

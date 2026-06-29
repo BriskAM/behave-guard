@@ -9,16 +9,19 @@ from sklearn.preprocessing import StandardScaler
 class LSTMAutoencoder(nn.Module):
     """
     LSTM Autoencoder following BehaveGuard architecture:
-    Inputs: [batch_size, seq_len, feature_dim]
+    Inputs: [batch_size, seq_len, 11] (10 continuous features + 1 categorical key index)
     """
-    def __init__(self, seq_len: int = 50, feature_dim: int = 10, latent_dim: int = 16):
+    def __init__(self, seq_len: int = 50, feature_dim: int = 10, latent_dim: int = 16, num_keys: int = 135, embed_dim: int = 8):
         super().__init__()
         self.seq_len = seq_len
         self.feature_dim = feature_dim
         self.latent_dim = latent_dim
+        
+        self.embedding = nn.Embedding(num_keys, embed_dim)
+        input_dim = feature_dim + embed_dim
 
         # Encoder
-        self.encoder_lstm1 = nn.LSTM(input_size=feature_dim, hidden_size=64, batch_first=True)
+        self.encoder_lstm1 = nn.LSTM(input_size=input_dim, hidden_size=64, batch_first=True)
         self.encoder_lstm2 = nn.LSTM(input_size=64, hidden_size=32, batch_first=True)
         self.latent_proj = nn.Linear(32, latent_dim)
 
@@ -32,8 +35,16 @@ class LSTMAutoencoder(nn.Module):
         self.decoder_dense = nn.Linear(64, feature_dim)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # x shape: [batch_size, seq_len, 11]
+        numerical = x[:, :, :10]
+        cat_idx = x[:, :, 10].long()
+        cat_idx = torch.clamp(cat_idx, 0, 134)
+        
+        embedded = self.embedding(cat_idx)  # [batch_size, seq_len, embed_dim]
+        combined = torch.cat([numerical, embedded], dim=-1)  # [batch_size, seq_len, input_dim]
+
         # Encoder
-        out1, _ = self.encoder_lstm1(x)
+        out1, _ = self.encoder_lstm1(combined)
         out2, (hn, _) = self.encoder_lstm2(out1)
         
         # Take last hidden state of final encoder layer
@@ -95,13 +106,17 @@ class BehaveGuardLSTM:
         Train the autoencoder on genuine sequences.
         sequences: list of shape (50, 10) arrays
         """
-        X = np.stack(sequences)  # (N, 50, 10)
+        X = np.stack(sequences)  # (N, 50, 11)
         N = len(sequences)
 
-        # Fit StandardScaler on flattened sequence data
-        X_flat = X.reshape(-1, self.feature_dim)
+        # Fit StandardScaler on continuous numerical features only
+        X_num = X[:, :, :10]
+        X_cat = X[:, :, 10:11]
+        
+        X_flat = X_num.reshape(-1, self.feature_dim)
         self.scaler.fit(X_flat)
-        X_scaled = self.scaler.transform(X_flat).reshape(N, self.seq_len, self.feature_dim)
+        X_num_scaled = self.scaler.transform(X_flat).reshape(N, self.seq_len, self.feature_dim)
+        X_scaled = np.concatenate([X_num_scaled, X_cat], axis=-1)
 
         self.model.train()
         dataset = torch.tensor(X_scaled, dtype=torch.float32)
@@ -121,8 +136,8 @@ class BehaveGuardLSTM:
                 optimizer.zero_grad()
                 recon, latent = self.model(batch)
 
-                # Custom weighted MSE loss
-                diff = (recon - batch) ** 2
+                # Custom weighted MSE loss on continuous features only
+                diff = (recon - batch[:, :, :10]) ** 2
                 recon_loss = (diff * feature_weights).mean()
 
                 # Compactness loss: pull latents to their mean
@@ -145,7 +160,7 @@ class BehaveGuardLSTM:
                 batch = torch.tensor(seq_scaled, dtype=torch.float32).to(self.device)
                 recon, latent = self.model(batch)
 
-                diff = (recon - batch) ** 2
+                diff = (recon - batch[:, :, :10]) ** 2
                 err = (diff * feature_weights).mean().item()
                 raw_errors.append(err)
                 latents_list.append(latent.cpu().numpy()[0])
@@ -184,14 +199,20 @@ class BehaveGuardLSTM:
             raise RuntimeError("Model not trained.")
 
         self.model.eval()
-        seq_scaled = self.scaler.transform(sequence)
+        
+        # Scale continuous features only
+        numerical = sequence[:, :10]
+        categorical = sequence[:, 10:11]
+        
+        num_scaled = self.scaler.transform(numerical)
+        seq_scaled = np.concatenate([num_scaled, categorical], axis=-1)
         
         feature_weights = torch.tensor([1.4, 1.0, 1.6, 0.5, 0.5, 0.5, 0.5, 0.3, 0.3, 0.8], device=self.device)
         batch = torch.tensor(seq_scaled, dtype=torch.float32).unsqueeze(0).to(self.device)
         
         with torch.no_grad():
             recon, latent = self.model(batch)
-            diff = (recon - batch) ** 2
+            diff = (recon - batch[:, :, :10]) ** 2
             raw_recon = float((diff * feature_weights).mean().item())
 
         latent_vec = latent.cpu().numpy()[0]

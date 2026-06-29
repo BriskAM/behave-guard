@@ -103,7 +103,7 @@ def _create_empty_key_events():
     df.to_csv(KEY_EVENTS_CSV, index=False)
 
 def _create_empty_mouse_passive():
-    df = pd.DataFrame(columns=['subject_id', 'collected_at', 'x', 'y', 'ts', 'dx', 'dy'])
+    df = pd.DataFrame(columns=['subject_id', 'collected_at', 'x', 'y', 'ts', 'dx', 'dy', 'pressure'])
     df.to_csv(MOUSE_PASSIVE_CSV, index=False)
 
 def _create_empty_dot_trials():
@@ -181,7 +181,8 @@ def save_session(data: Dict[str, Any]):
                 'y': p.get("y", 0.0),
                 'ts': p.get("ts", 0.0),
                 'dx': p.get("dx", 0.0),
-                'dy': p.get("dy", 0.0)
+                'dy': p.get("dy", 0.0),
+                'pressure': p.get("pressure", 0.5)
             })
         pd.DataFrame(mp_rows).to_csv(MOUSE_PASSIVE_CSV, mode='a', header=not MOUSE_PASSIVE_CSV.exists(), index=False)
 

@@ -23,6 +23,7 @@ export interface MousePoint {
   ts: number;
   dx: number;
   dy: number;
+  pressure?: number;
 }
 
 export interface DotTrial {

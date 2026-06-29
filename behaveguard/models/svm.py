@@ -36,8 +36,8 @@ class BehaveGuardSVM:
         scale_floor = 0.20 if X.shape[1] == 23 else 0.05
         self.scaler.scale_ = np.maximum(self.scaler.scale_, scale_floor)
         
-        if X.shape[1] == 7:
-            self.scaler.scale_[6] = 200.0
+        if X.shape[1] == 9:
+            self.scaler.scale_[8] = 200.0
             
         # Re-scale using the updated scale_
         X_scaled = (X - self.scaler.mean_) / self.scaler.scale_
@@ -72,7 +72,7 @@ class BehaveGuardSVM:
         
         # Map to anomaly_score in [0, 1] using global calibration thresholds
         # to ensure scores are comparable across candidate models in identification tasks.
-        calib_thresh = 0.20 if X.shape[1] == 7 else 0.30
+        calib_thresh = 0.20 if X.shape[1] == 9 else 0.30
         norm_score = raw_decision / (calib_thresh * 1.5)
         anomaly_score = float(np.clip(norm_score, 0.0, 1.0))
         

@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 
+from datetime import datetime
 from behaveguard.storage import MODELS_DIR, load_keyboard_events, load_mouse_data
 from behaveguard.features import (
     extract_keystroke_sequences, extract_keystroke_aggregates,
-    extract_mouse_kinematic_windows, extract_mouse_task_baselines
+    extract_mouse_kinematic_windows, extract_mouse_task_baselines,
+    extract_trial_path_kinematics
 )
 from behaveguard.models.svm import BehaveGuardSVM
 from behaveguard.models.lstm import BehaveGuardLSTM
@@ -74,8 +76,16 @@ def train_user_models(subject_id: str):
 
         # 2. Extract features
         save_status(subject_id, "training", 0.2, "Extracting sequence and aggregate features...")
-        sequences = extract_keystroke_sequences(events, seq_len=50, stride=10) # dense stride for more training samples
-        aggregates = extract_keystroke_aggregates(events, win_size=50, stride=10)
+        base_ts_ms = None
+        if events:
+            try:
+                dt = datetime.fromisoformat(events[0]["collected_at"].replace("Z", "+00:00"))
+                base_ts_ms = dt.timestamp() * 1000.0
+            except Exception:
+                pass
+        
+        sequences = extract_keystroke_sequences(events, seq_len=50, stride=10, base_ts_ms=base_ts_ms) # dense stride for more training samples
+        aggregates = extract_keystroke_aggregates(events, win_size=50, stride=10, base_ts_ms=base_ts_ms)
 
         if len(sequences) < 10 or len(aggregates) < 10:
             raise ValueError(f"Extracted only {len(sequences)} windows from {len(events)} keys. Need at least 10 windows. Please type more.")
@@ -133,6 +143,32 @@ def train_user_models(subject_id: str):
         passive = mouse_data.get("passive", [])
         dot_trials = mouse_data.get("dot_trials", [])
         drag_trials = mouse_data.get("drag_trials", [])
+
+        # Reconstruct active coordinate paths from raw JSON backups if present
+        backup_dir = Path(__file__).resolve().parent / "data" / "backup_sessions"
+        if backup_dir.exists():
+            backup_files = list(backup_dir.glob(f"{subject_id}_*.json"))
+            for bf in backup_files:
+                try:
+                    with open(bf, "r") as f:
+                        session_json = json.load(f)
+                    js_mouse = session_json.get("mouse", {})
+                    js_dots = js_mouse.get("dot_trials", [])
+                    js_drags = js_mouse.get("drag_trials", [])
+                    
+                    for jd in js_dots:
+                        for td in dot_trials:
+                            if (abs(td.get("appeared_at", 0.0) - jd.get("appeared_at", 0.0)) < 1e-3 and 
+                                abs(td.get("clicked_at", 0.0) - jd.get("clicked_at", 0.0)) < 1e-3):
+                                td["path"] = jd.get("path", [])
+                                
+                    for jg in js_drags:
+                        for tg in drag_trials:
+                            if (abs(tg.get("started_at", 0.0) - jg.get("started_at", 0.0)) < 1e-3 and 
+                                abs(tg.get("ended_at", 0.0) - jg.get("ended_at", 0.0)) < 1e-3):
+                                tg["path"] = jg.get("path", [])
+                except Exception as e:
+                    print(f"[WARN] Failed parsing backup JSON {bf}: {e}")
 
         # Save mouse task baselines
         mouse_baselines = extract_mouse_task_baselines(dot_trials, drag_trials)
@@ -216,13 +252,22 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
             "anomaly_score": 0.0
         }
 
-    sequences = extract_keystroke_sequences(events, seq_len=50, stride=25)
-    aggregates = extract_keystroke_aggregates(events, win_size=50, stride=25)
+    collected_at_str = session_data.get("collected_at")
+    base_ts_ms = None
+    if collected_at_str:
+        try:
+            dt = datetime.fromisoformat(collected_at_str.replace("Z", "+00:00"))
+            base_ts_ms = dt.timestamp() * 1000.0
+        except Exception:
+            pass
+
+    sequences = extract_keystroke_sequences(events, seq_len=50, stride=25, base_ts_ms=base_ts_ms)
+    aggregates = extract_keystroke_aggregates(events, win_size=50, stride=25, base_ts_ms=base_ts_ms)
 
     # If the session is short and doesn't yield a full window, fallback to sizing down the window size
     if not sequences or not aggregates:
-        sequences = extract_keystroke_sequences(events, seq_len=min(len(events)-1, 50), stride=25)
-        aggregates = extract_keystroke_aggregates(events, win_size=min(len(events), 50), stride=25)
+        sequences = extract_keystroke_sequences(events, seq_len=min(len(events)-1, 50), stride=25, base_ts_ms=base_ts_ms)
+        aggregates = extract_keystroke_aggregates(events, win_size=min(len(events), 50), stride=25, base_ts_ms=base_ts_ms)
 
     if not sequences or not aggregates:
         # Still empty, fallback to simple event-level scoring or default values
@@ -290,18 +335,36 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
             travel = t.get("travel_time_ms")
             error = t.get("error_px")
             if travel is not None:
-                z_scores.append(abs((travel - mouse_baselines["dot_travel_mean"]) / mouse_baselines["dot_travel_std"]))
+                z_scores.append(abs((travel - mouse_baselines["dot_travel_mean"]) / (mouse_baselines["dot_travel_std"] + 1e-8)))
             if error is not None:
-                z_scores.append(abs((error - mouse_baselines["dot_error_mean"]) / mouse_baselines["dot_error_std"]))
+                z_scores.append(abs((error - mouse_baselines["dot_error_mean"]) / (mouse_baselines["dot_error_std"] + 1e-8)))
+                
+            path = t.get("path", [])
+            if path and "dot_curvature_mean" in mouse_baselines:
+                k = extract_trial_path_kinematics(path)
+                z_scores.append(abs((k["curvature"] - mouse_baselines["dot_curvature_mean"]) / (mouse_baselines["dot_curvature_std"] + 1e-8)))
+                z_scores.append(abs((k["peak_velocity"] - mouse_baselines["dot_peak_velocity_mean"]) / (mouse_baselines["dot_peak_velocity_std"] + 1e-8)))
+                z_scores.append(abs((k["submovements"] - mouse_baselines["dot_submovements_mean"]) / (mouse_baselines["dot_submovements_std"] + 1e-8)))
+                z_scores.append(abs((k["tremor"] - mouse_baselines["dot_tremor_mean"]) / (mouse_baselines["dot_tremor_std"] + 1e-8)))
+                z_scores.append(abs((k["direction_reversals"] - mouse_baselines["dot_reversals_mean"]) / (mouse_baselines["dot_reversals_std"] + 1e-8)))
                 
     if drag_trials and "drag_duration_mean" in mouse_baselines:
         for t in drag_trials:
             dur = t.get("duration_ms")
             success = t.get("success")
             if dur is not None:
-                z_scores.append(abs((dur - mouse_baselines["drag_duration_mean"]) / mouse_baselines["drag_duration_std"]))
+                z_scores.append(abs((dur - mouse_baselines["drag_duration_mean"]) / (mouse_baselines["drag_duration_std"] + 1e-8)))
             if success is not None and not success:
                 z_scores.append(3.0)
+                
+            path = t.get("path", [])
+            if path and "drag_curvature_mean" in mouse_baselines:
+                k = extract_trial_path_kinematics(path)
+                z_scores.append(abs((k["curvature"] - mouse_baselines["drag_curvature_mean"]) / (mouse_baselines["drag_curvature_std"] + 1e-8)))
+                z_scores.append(abs((k["peak_velocity"] - mouse_baselines["drag_peak_velocity_mean"]) / (mouse_baselines["drag_peak_velocity_std"] + 1e-8)))
+                z_scores.append(abs((k["submovements"] - mouse_baselines["drag_submovements_mean"]) / (mouse_baselines["drag_submovements_std"] + 1e-8)))
+                z_scores.append(abs((k["tremor"] - mouse_baselines["drag_tremor_mean"]) / (mouse_baselines["drag_tremor_std"] + 1e-8)))
+                z_scores.append(abs((k["direction_reversals"] - mouse_baselines["drag_reversals_mean"]) / (mouse_baselines["drag_reversals_std"] + 1e-8)))
 
     task_anomaly = 0.0
     if z_scores:
@@ -339,6 +402,17 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
     else:
         action = "lockout"
 
+    # Biometric style drift detection (comparing session aggregates with enrollment baseline)
+    drift_detected = False
+    drift_score = 0.0
+    if svm_model.enrollment_mean is not None and svm_model.enrollment_std is not None:
+        current_mean = np.mean(aggregates, axis=0)
+        # Compare first 14 keyboard aggregate parameters (dwells, flights, digraphs means and stds)
+        z_diff = np.abs((current_mean - svm_model.enrollment_mean) / svm_model.enrollment_std)
+        drift_score = float(np.mean(z_diff[:14]))
+        if drift_score > 2.5:
+            drift_detected = True
+
     return {
         "is_trained": True,
         "verdict": verdict,
@@ -347,6 +421,11 @@ def score_session(subject_id: str, session_data: Dict[str, Any]) -> Dict[str, An
         "recommended_action": action,
         "keyboard_score": kb_score,
         "mouse_score": fused_mouse_score if has_mouse_data else None,
+        "drift": {
+            "drift_detected": drift_detected,
+            "drift_score": drift_score,
+            "message": "Typing style drift detected. Retraining recommended." if drift_detected else "Profile style stable."
+        },
         "models": {
             "svm": {
                 "verdict": svm_session["session_verdict"],

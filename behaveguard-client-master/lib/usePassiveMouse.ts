@@ -13,26 +13,27 @@ export function usePassiveMouseCollector(isEnabled: boolean = true) {
       return;
     }
 
-    function onMove(e: MouseEvent) {
+    function onMove(e: PointerEvent) {
       const ts = performance.now();
       const x = e.clientX;
       const y = e.clientY;
+      const pressure = e.pressure !== undefined ? e.pressure : 0.5;
       const prev = last.current;
       if (prev) {
         const dx = x - prev.x;
         const dy = y - prev.y;
         const dt = ts - prev.ts;
         if (Math.hypot(dx, dy) < 5 && dt < 16) return;
-        pointsRef.current.push({ x, y, ts, dx, dy });
+        pointsRef.current.push({ x, y, ts, dx, dy, pressure });
       } else {
-        pointsRef.current.push({ x, y, ts, dx: 0, dy: 0 });
+        pointsRef.current.push({ x, y, ts, dx: 0, dy: 0, pressure });
       }
       last.current = { x, y, ts };
       // cap to ~3000 points to bound memory/payload, matching the spec's target density
       if (pointsRef.current.length > 3000) pointsRef.current.shift();
     }
-    window.addEventListener("mousemove", onMove, { passive: true });
-    return () => window.removeEventListener("mousemove", onMove);
+    window.addEventListener("pointermove", onMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onMove);
   }, [isEnabled]);
 
   return pointsRef;
