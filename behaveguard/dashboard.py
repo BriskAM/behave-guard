@@ -1,5 +1,7 @@
 import sys
 from pathlib import Path
+from datetime import datetime
+
 # Add project root to python path to avoid ModuleNotFoundError
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -10,16 +12,20 @@ import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+import json
 
 from behaveguard.storage import (
     DATA_DIR, get_enrolled_profiles, load_keyboard_events, load_mouse_data
 )
-from behaveguard.features import extract_keystroke_aggregates, extract_keystroke_sequences
+from behaveguard.features import (
+    extract_keystroke_aggregates, extract_keystroke_sequences,
+    extract_trial_path_kinematics
+)
 from behaveguard.pipeline import get_training_status
 
 # Page config
 st.set_page_config(
-    page_title="BehaveGuard Analytics Dashboard",
+    page_title="BehaveGuard Operations Center",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -28,33 +34,51 @@ st.set_page_config(
 # App Title & Styling
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Roboto+Mono:wght@400;700&display=swap');
+    
+    .reportview-container {
+        background-color: #0b0f19;
+    }
     .main-title {
         font-family: 'Inter', sans-serif;
         font-weight: 800;
-        font-size: 2.8rem;
-        background: linear-gradient(135deg, #FFB300 0%, #00E5FF 100%);
+        font-size: 3rem;
+        background: linear-gradient(135deg, #00E5FF 0%, #7D2AE8 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.2rem;
     }
     .subtitle {
         font-family: 'Roboto Mono', monospace;
-        color: #757575;
+        color: #8A99AD;
         font-size: 1.1rem;
         margin-bottom: 2rem;
     }
-    .metric-card {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 8px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+    .card {
+        background-color: #121824;
+        border: 1px solid #1f2a3f;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 15px;
+    }
+    .metric-value {
+        font-family: 'Roboto Mono', monospace;
+        font-weight: 700;
+        font-size: 2.2rem;
+        color: #00E5FF;
+    }
+    .metric-label {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.9rem;
+        color: #8A99AD;
+        text-transform: uppercase;
+        letter-spacing: 1px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1 class='main-title'>BehaveGuard</h1>", unsafe_allow_html=True)
-st.markdown("<p class='subtitle'>Continuous Behavioral Authentication Engine & Fingerprint Analytics</p>", unsafe_allow_html=True)
+st.markdown("<h1 class='main-title'>🛡️ BehaveGuard Operations Center</h1>", unsafe_allow_html=True)
+st.markdown("<p class='subtitle'>Continuous Behavioral Biometrics Analytics & Threat Detection Dashboard</p>", unsafe_allow_html=True)
 
 # Check database
 if not (DATA_DIR / "sessions.csv").exists():
@@ -62,20 +86,21 @@ if not (DATA_DIR / "sessions.csv").exists():
     st.stop()
 
 # Sidebar controls
-st.sidebar.title("🛡️ Profile Inspector")
+st.sidebar.title("🛡️ Profile Selector")
 profiles = get_enrolled_profiles()
 if not profiles:
     st.sidebar.warning("No profiles found in the database. Enroll some profiles using the client.")
     st.stop()
 
-selected_profile = st.sidebar.selectbox("Select Profile to Inspect", profiles)
+selected_profile = st.sidebar.selectbox("Inspect Active User Profile", profiles)
 
 # Tab structure
-tab_summary, tab_keys, tab_mouse, tab_models, tab_clusters = st.tabs([
+tab_summary, tab_keys, tab_mouse, tab_compare, tab_models, tab_clusters = st.tabs([
     "📊 User Session Summary", 
-    "⌨️ Keystroke Dynamics", 
-    "🖱️ Mouse Dynamics", 
-    "🤖 ML Models & Drift",
+    "⌨️ Keystroke Rhythmics", 
+    "🖱️ Active/Passive Kinematics", 
+    "👥 Profile Comparison Space",
+    "🤖 ML Models & Drift Monitor",
     "🌌 Biometric Cluster Space"
 ])
 
@@ -85,23 +110,26 @@ mouse = load_mouse_data(selected_profile)
 sessions_df = pd.read_csv(DATA_DIR / "sessions.csv")
 profile_sessions = sessions_df[sessions_df["subject_id"] == selected_profile]
 
+# Load recent backup raw JSON files for path coordinates mapping
+backup_dir = DATA_DIR / "backup_sessions"
+backup_files = []
+if backup_dir.exists():
+    backup_files = sorted(list(backup_dir.glob(f"{selected_profile}_*.json")), key=lambda x: x.stat().st_mtime, reverse=True)
+
 # ------------------------------------------------------------------ #
 # TAB 1: SUMMARY
 # ------------------------------------------------------------------ #
 with tab_summary:
-    st.header(f"Profile: {selected_profile}")
+    st.header(f"Profile Overview: {selected_profile}")
     
-    # Overview metrics
+    # Overview metrics calculation
     if len(events) > 0:
-        # Calculate WPM
         times = [e["press_ts"] for e in events]
         span_min = (max(times) - min(times)) / 60000.0 if len(times) > 1 else 1e-6
         avg_wpm = (len(events) / 5.0) / max(span_min, 0.1)
-        
         dwells = [e["dwell_ms"] for e in events]
         avg_dwell = np.mean(dwells)
         
-        # Calculate average flight time
         flights = []
         for i in range(len(events)-1):
             fl = events[i+1]["press_ts"] - events[i]["release_ts"]
@@ -113,23 +141,23 @@ with tab_summary:
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total Sessions", len(profile_sessions))
+        st.markdown(f'<div class="card"><div class="metric-label">Total Sessions</div><div class="metric-value">{len(profile_sessions)}</div></div>', unsafe_allow_html=True)
     with col2:
-        st.metric("Typing Speed (WPM)", f"{avg_wpm:.1f}")
+        st.markdown(f'<div class="card"><div class="metric-label">Typing Speed</div><div class="metric-value">{avg_wpm:.1f} <span style="font-size: 1rem; color: #8A99AD;">WPM</span></div></div>', unsafe_allow_html=True)
     with col3:
-        st.metric("Avg Key Dwell", f"{avg_dwell:.1f} ms")
+        st.markdown(f'<div class="card"><div class="metric-label">Avg Hold (Dwell)</div><div class="metric-value">{avg_dwell:.1f} <span style="font-size: 1rem; color: #8A99AD;">ms</span></div></div>', unsafe_allow_html=True)
     with col4:
-        st.metric("Avg Key Flight", f"{avg_flight:.1f} ms")
+        st.markdown(f'<div class="card"><div class="metric-label">Avg Interval (Flight)</div><div class="metric-value">{avg_flight:.1f} <span style="font-size: 1rem; color: #8A99AD;">ms</span></div></div>', unsafe_allow_html=True)
 
     # Sessions log
-    st.subheader("Recorded Sessions Log")
+    st.subheader("Historical Sessions Log")
     st.dataframe(profile_sessions, use_container_width=True)
 
 # ------------------------------------------------------------------ #
-# TAB 2: KEYSTROKE DYNAMICS
+# TAB 2: KEYSTROKE RHYTHMICS
 # ------------------------------------------------------------------ #
 with tab_keys:
-    st.header("Keyboard Rhythm Analytics")
+    st.header("Keyboard Rhythm & Timing Signature")
     
     if len(events) < 5:
         st.info("Insufficient keystroke events to render distributions.")
@@ -139,83 +167,200 @@ with tab_keys:
         # 1. Dwell and Flight distributions
         col1, col2 = st.columns(2)
         with col1:
-            fig = px.histogram(df_keys[df_keys["dwell_ms"] < 1000], x="dwell_ms", nbins=50, 
-                               title="Dwell Time Distribution (Key Hold Time)", 
+            fig = px.histogram(df_keys[df_keys["dwell_ms"] < 600], x="dwell_ms", nbins=50, 
+                               title="Key Dwell Time Distribution (Hold Time)", 
                                labels={"dwell_ms": "Dwell Time (ms)"},
-                               color_discrete_sequence=["#FFB300"])
+                               color_discrete_sequence=["#00E5FF"], template="plotly_dark")
             fig.update_layout(bargap=0.1)
             st.plotly_chart(fig, use_container_width=True)
             
         with col2:
             df_flights = pd.DataFrame({"flight_ms": flights}) if flights else pd.DataFrame(columns=["flight_ms"])
             if not df_flights.empty:
-                fig = px.histogram(df_flights[df_flights["flight_ms"] < 1500], x="flight_ms", nbins=50, 
-                                   title="Flight Time Distribution (Key-to-Key Gap)", 
+                fig = px.histogram(df_flights[df_flights["flight_ms"] < 1000], x="flight_ms", nbins=50, 
+                                   title="Key Flight Time Distribution (Gap Time)", 
                                    labels={"flight_ms": "Flight Time (ms)"},
-                                   color_discrete_sequence=["#FF8F00"])
+                                   color_discrete_sequence=["#7D2AE8"], template="plotly_dark")
                 fig.update_layout(bargap=0.1)
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No valid flight times collected yet.")
 
-        # 2. Category distributions
-        st.subheader("Key Category Ratios")
-        cat_counts = df_keys["key_category"].value_counts().reset_index()
-        cat_counts.columns = ["Category", "Count"]
-        fig = px.pie(cat_counts, names="Category", values="Count", color_discrete_sequence=px.colors.qualitative.Pastel)
-        st.plotly_chart(fig, use_container_width=True)
+        # 2. Transition Heatmap
+        st.subheader("Key Transition Bigram Heatmap (Top Transitions)")
+        bigrams = []
+        for i in range(len(events)-1):
+            a, b = events[i], events[i+1]
+            fl = b["press_ts"] - a["release_ts"]
+            if 0 < fl < 1000:
+                bigrams.append({
+                    "First": a["key_id"].upper(),
+                    "Second": b["key_id"].upper(),
+                    "Flight": fl
+                })
+        if bigrams:
+            df_bi = pd.DataFrame(bigrams)
+            top_keys = df_bi["First"].value_counts().head(10).index.tolist()
+            df_pivot = df_bi[(df_bi["First"].isin(top_keys)) & (df_bi["Second"].isin(top_keys))]
+            if not df_pivot.empty:
+                pivot_tbl = df_pivot.pivot_table(index="First", columns="Second", values="Flight", aggfunc="mean").fillna(0)
+                fig_heat = px.imshow(pivot_tbl, text_auto=".0f", color_continuous_scale="Purples",
+                                     title="Transition Flight Gaps (ms) between Common Keys",
+                                     labels=dict(color="Flight Time (ms)"), template="plotly_dark")
+                st.plotly_chart(fig_heat, use_container_width=True)
+            else:
+                st.info("Not enough key transition statistics to render transitions matrix.")
+        else:
+            st.info("No key transitions recorded.")
 
 # ------------------------------------------------------------------ #
-# TAB 3: MOUSE DYNAMICS
+# TAB 3: ACTIVE/PASSIVE KINEMATICS
 # ------------------------------------------------------------------ #
 with tab_mouse:
-    st.header("Mouse Trajectory & Click Analytics")
+    st.header("Active Target Trails & Pointer Pressure Dynamics")
     
     passive_pts = mouse.get("passive", [])
     dot_trials = mouse.get("dot_trials", [])
     drag_trials = mouse.get("drag_trials", [])
+    
+    # Attempt to load recent trial paths from raw backup JSONs
+    recent_dot_paths = []
+    recent_drag_paths = []
+    latest_pressure_log = []
+    
+    if backup_files:
+        try:
+            with open(backup_files[0], "r") as f:
+                raw_session = json.load(f)
+            js_mouse = raw_session.get("mouse", {})
+            recent_dot_paths = [t for t in js_mouse.get("dot_trials", []) if "path" in t and len(t["path"]) > 1]
+            recent_drag_paths = [t for t in js_mouse.get("drag_trials", []) if "path" in t and len(t["path"]) > 1]
+            
+            # Extract pressure data from passive move points
+            passive_events = js_mouse.get("passive_points", [])
+            latest_pressure_log = [p.get("pressure", 0.5) for p in passive_events if "pressure" in p]
+        except Exception as e:
+            pass
 
-    if not passive_pts and not dot_trials:
-        st.info("No mouse dynamics data collected for this profile yet.")
-    else:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Accuracy: Travel Time vs Click Error")
-            if dot_trials:
-                df_dots = pd.DataFrame(dot_trials)
-                fig = px.scatter(df_dots, x="travel_time_ms", y="error_px", 
-                                 title="Target Clicks Accuracy",
-                                 labels={"travel_time_ms": "Travel Time (ms)", "error_px": "Click Error (pixels)"},
-                                 color_discrete_sequence=["#00E5FF"])
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No target-clicking dot task records.")
-                
-        with col2:
-            st.subheader("Drag Task Metrics")
-            if drag_trials:
-                df_drags = pd.DataFrame(drag_trials)
-                success_rate = df_drags["success"].mean() * 100.0
-                avg_dur = df_drags["duration_ms"].mean()
-                
-                col_m1, col_m2 = st.columns(2)
-                with col_m1:
-                    st.metric("Drag Success Rate", f"{success_rate:.1f}%")
-                with col_m2:
-                    st.metric("Avg Drag Duration", f"{avg_dur:.1f} ms")
-                
-                fig = px.box(df_drags, y="duration_ms", points="all",
-                             title="Drag Durations Boxplot",
-                             labels={"duration_ms": "Duration (ms)"},
-                             color_discrete_sequence=["#00B8D4"])
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No drag-and-drop task records.")
+    col_k1, col_k2 = st.columns(2)
+    with col_k1:
+        st.subheader("🎯 Active Kinematics (Dot Clicking Task)")
+        if recent_dot_paths:
+            # Dropdown to select which dot trial path to visualize
+            trial_sel = st.selectbox("Select Dot Trial Target Path to Plot", 
+                                     options=range(len(recent_dot_paths)),
+                                     format_func=lambda i: f"Trial {i+1} (Err: {recent_dot_paths[i].get('error_px', 0.0):.1f}px, Time: {recent_dot_paths[i].get('travel_time_ms', 0):.0f}ms)")
+            
+            t_data = recent_dot_paths[trial_sel]
+            path_coords = t_data["path"]
+            df_path = pd.DataFrame(path_coords)
+            
+            # Compute kinematics stats
+            k_stats = extract_trial_path_kinematics(path_coords)
+            
+            # Plot path
+            fig_path = go.Figure()
+            # Draw straight line target vector
+            fig_path.add_trace(go.Scatter(x=[path_coords[0]["x"], t_data["target_x"]],
+                                          y=[path_coords[0]["y"], t_data["target_y"]],
+                                          mode="lines", name="Target Straight Path",
+                                          line=dict(color="#1f2a3f", dash="dash")))
+            # Draw actual movement trajectory
+            fig_path.add_trace(go.Scatter(x=df_path["x"], y=df_path["y"],
+                                          mode="lines+markers", name="Actual Trajectory",
+                                          line=dict(color="#00E5FF", width=3),
+                                          marker=dict(size=6, color="#7D2AE8")))
+            # Draw target circle
+            fig_path.add_trace(go.Scatter(x=[t_data["target_x"]], y=[t_data["target_y"]],
+                                          mode="markers", name="Target Endpoint",
+                                          marker=dict(size=14, color="#00C853", symbol="circle-open", line=dict(width=3))))
+            
+            fig_path.update_yaxes(autorange="reversed")
+            fig_path.update_layout(title="Active target movement deviation path", template="plotly_dark",
+                                   xaxis_title="Screen X position (px)", yaxis_title="Screen Y position (px)")
+            st.plotly_chart(fig_path, use_container_width=True)
+            
+            # Print calculated kinematics
+            st.markdown(f"""
+            **Calculated Kinematic Attributes for this Trial:**
+            *   **Curvature Ratio**: `{k_stats['curvature']:.2f}` (1.0 = perfect straight path)
+            *   **Peak Velocity**: `{k_stats['peak_velocity'] * 1000.0:.1f} px/sec`
+            *   **Direction Reversals**: `{k_stats['direction_reversals']}`
+            *   **Submovements Count**: `{k_stats['submovements']}`
+            *   **Tremor index**: `{k_stats['tremor']:.3f}`
+            """)
+        elif dot_trials:
+            df_dots = pd.DataFrame(dot_trials)
+            fig = px.scatter(df_dots, x="travel_time_ms", y="error_px", 
+                             title="Target Click Time vs Click Error",
+                             labels={"travel_time_ms": "Travel Time (ms)", "error_px": "Click Error (pixels)"},
+                             color_discrete_sequence=["#00E5FF"], template="plotly_dark")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No dot target click trials recorded.")
 
-        # New Row: Passive Mouse Kinematics
-        st.write("---")
-        st.subheader("Passive Kinematics & Cursor Trajectory")
+    with col_k2:
+        st.subheader("🎯 Active Kinematics (Drag and Drop Task)")
+        if recent_drag_paths:
+            # Dropdown to select which drag trial path to visualize
+            drag_sel = st.selectbox("Select Drag Trial Target Path to Plot", 
+                                     options=range(len(recent_drag_paths)),
+                                     format_func=lambda i: f"Trial {i+1} (Success: {recent_drag_paths[i].get('success')}, Time: {recent_drag_paths[i].get('duration_ms', 0):.0f}ms)")
+            
+            t_data = recent_drag_paths[drag_sel]
+            path_coords = t_data["path"]
+            df_path = pd.DataFrame(path_coords)
+            
+            # Compute kinematics stats
+            k_stats = extract_trial_path_kinematics(path_coords)
+            
+            # Plot path
+            fig_path = go.Figure()
+            # Draw actual movement trajectory
+            fig_path.add_trace(go.Scatter(x=df_path["x"], y=df_path["y"],
+                                          mode="lines+markers", name="Actual Trajectory",
+                                          line=dict(color="#FF007F", width=3),
+                                          marker=dict(size=6, color="#7D2AE8")))
+            
+            fig_path.update_yaxes(autorange="reversed")
+            fig_path.update_layout(title="Active drag trajectory path", template="plotly_dark",
+                                   xaxis_title="Screen X position (px)", yaxis_title="Screen Y position (px)")
+            st.plotly_chart(fig_path, use_container_width=True)
+            
+            # Print calculated kinematics
+            st.markdown(f"""
+            **Calculated Kinematic Attributes for this Trial:**
+            *   **Curvature Ratio**: `{k_stats['curvature']:.2f}` (1.0 = perfect straight path)
+            *   **Peak Velocity**: `{k_stats['peak_velocity'] * 1000.0:.1f} px/sec`
+            *   **Direction Reversals**: `{k_stats['direction_reversals']}`
+            *   **Submovements Count**: `{k_stats['submovements']}`
+            *   **Tremor index**: `{k_stats['tremor']:.3f}`
+            """)
+        elif drag_trials:
+            df_drags = pd.DataFrame(drag_trials)
+            fig = px.box(df_drags, y="duration_ms", points="all",
+                         title="Drag Durations Boxplot",
+                         labels={"duration_ms": "Duration (ms)"},
+                         color_discrete_sequence=["#FF007F"], template="plotly_dark")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No drag and drop trials recorded.")
+
+    # New Row: Passive Mouse Kinematics & Pressure logs
+    st.write("---")
+    st.subheader("🖱️ Passive Kinematics & Pointer Pressure Tracking")
+    col_p1, col_p2 = st.columns(2)
+    
+    with col_p1:
+        if latest_pressure_log:
+            fig_press = px.line(y=latest_pressure_log, title="Pointer Pressure Log during Passive Moves",
+                                labels={"index": "Event sequence index", "y": "Pressure value (0.0 to 1.0)"},
+                                color_discrete_sequence=["#00C853"], template="plotly_dark")
+            st.plotly_chart(fig_press, use_container_width=True)
+        else:
+            st.info("No pointer pressure data log captured in the latest session. Default values (0.5) will be plotted.")
+            
+    with col_p2:
         if passive_pts:
             df_passive = pd.DataFrame(passive_pts).sort_values("ts").reset_index(drop=True)
             df_passive["dt"] = df_passive["ts"].diff() / 1000.0
@@ -224,76 +369,138 @@ with tab_mouse:
             df_passive["dist"] = np.hypot(df_passive["dx"], df_passive["dy"])
             df_passive["speed"] = df_passive["dist"] / (df_passive["dt"] + 1e-6)
             
-            # Clean outliers
-            df_clean = df_passive[(df_passive["dt"] > 0.001) & (df_passive["speed"] < 5000)].copy()
+            df_clean = df_passive[(df_passive["dt"] > 0.001) & (df_passive["speed"] < 4000)].copy()
             
-            col_p1, col_p2 = st.columns(2)
-            
-            with col_p1:
-                fig_speed = px.histogram(df_clean, x="speed", nbins=50,
-                                         title="Passive Movement Speed Distribution",
-                                         labels={"speed": "Speed (pixels / second)"},
-                                         color_discrete_sequence=["#00E5FF"])
-                fig_speed.update_layout(bargap=0.1)
-                st.plotly_chart(fig_speed, use_container_width=True)
-                
-            with col_p2:
-                # Plot a subset of points (e.g. up to 400 points) to show a trajectory path
-                df_traj = df_clean.head(400)
-                fig_traj = px.line(df_traj, x="x", y="y", markers=True,
-                                   title="Recent Mouse Cursor Path (First 400 points)",
-                                   labels={"x": "X Position (px)", "y": "Y Position (px)"},
-                                   color_discrete_sequence=["#D50000"])
-                fig_traj.update_yaxes(autorange="reversed") # Match screen coordinate system
-                st.plotly_chart(fig_traj, use_container_width=True)
+            fig_speed = px.histogram(df_clean, x="speed", nbins=50,
+                                     title="Passive Movement Speed Distribution",
+                                     labels={"speed": "Speed (pixels / second)"},
+                                     color_discrete_sequence=["#00E5FF"], template="plotly_dark")
+            fig_speed.update_layout(bargap=0.1)
+            st.plotly_chart(fig_speed, use_container_width=True)
         else:
             st.info("No passive mouse trajectory points recorded yet.")
 
 # ------------------------------------------------------------------ #
-# TAB 4: MODELS & DRIFT
+# TAB 4: PROFILE COMPARISON
 # ------------------------------------------------------------------ #
-with tab_models:
-    st.header("Machine Learning Verification Status")
-    
-    status = get_training_status(selected_profile)
-    st.subheader("Model Status Overview")
-    
-    # Progress visualization
-    st.json(status)
-
-    # Simulated longitudinal drift warning
-    st.subheader("Continuous Authentication Drift Detector")
+with tab_compare:
+    st.header("👥 Profile Rhythm Signatures Comparison")
     st.markdown("""
-    Continuous learning requires monitoring shifts in user habits over time (e.g. fatigue, coffee intake, keyboard changes).
-    Below is the simulated profile drift monitor compared to the enrollment baseline:
+    Compare your typing rhythm speed, holds, and intervals side-by-side with other candidates.
     """)
     
-    # Build simulated drift graph
-    t = np.arange(1, 31)
-    drift = 0.5 + 0.1 * np.sin(t / 2.0) + 0.01 * t # baseline + noise + linear drift
+    compare_selection = st.multiselect("Select Candidates to Compare", profiles, default=profiles[:min(3, len(profiles))])
     
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=t, y=drift, mode='lines+markers', name='Distance from Profile Centroid', line=dict(color='#00C853')))
-    # Threshold lines
-    fig.add_trace(go.Scatter(x=t, y=[1.2]*30, mode='lines', name='Suspicious Drift Threshold (T_drift)', line=dict(color='#FFD600', dash='dash')))
-    fig.add_trace(go.Scatter(x=t, y=[1.8]*30, mode='lines', name='Poisoning / Impostor Threshold (T_anomaly)', line=dict(color='#D50000', dash='dash')))
-    
-    fig.update_layout(
-        title="Session Mahalanobis Distance Over 30 Days",
-        xaxis_title="Session Index",
-        yaxis_title="Mahalanobis Distance",
-        legend_title="Threshold Status"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    comp_data = []
+    for p in compare_selection:
+        p_events = load_keyboard_events(p)
+        if p_events:
+            p_dwells = [e["dwell_ms"] for e in p_events]
+            p_flights = []
+            for i in range(len(p_events)-1):
+                fl = p_events[i+1]["press_ts"] - p_events[i]["release_ts"]
+                if 0 < fl < 2000:
+                    p_flights.append(fl)
+            
+            comp_data.append({
+                "Subject ID": p,
+                "Avg Dwell (Hold)": float(np.mean(p_dwells)) if p_dwells else 0.0,
+                "Avg Flight (Gap)": float(np.mean(p_flights)) if p_flights else 0.0,
+                "Dwell Std": float(np.std(p_dwells)) if p_dwells else 0.0,
+                "Flight Std": float(np.std(p_flights)) if p_flights else 0.0
+            })
+            
+    if comp_data:
+        df_comp = pd.DataFrame(comp_data)
+        st.dataframe(df_comp, use_container_width=True)
+        
+        # Radar Chart comparison
+        fig_radar = go.Figure()
+        categories = ["Avg Dwell (Hold)", "Avg Flight (Gap)", "Dwell Std", "Flight Std"]
+        
+        for idx, row in df_comp.iterrows():
+            values = [row[cat] for cat in categories]
+            fig_radar.add_trace(go.Scatterpolar(
+                r=values + [values[0]],
+                theta=categories + [categories[0]],
+                fill='toself',
+                name=row["Subject ID"]
+            ))
+            
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, max(df_comp["Avg Flight (Gap)"].max() * 1.2, 300.0)])),
+            showlegend=True, title="Profile Rhythm Polar Signatures (ms)", template="plotly_dark"
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+    else:
+        st.info("No comparative metrics available yet.")
 
 # ------------------------------------------------------------------ #
-# TAB 5: BIOMETRIC CLUSTER SPACE
+# TAB 5: MODELS & DRIFT MONITOR
+# ------------------------------------------------------------------ #
+with tab_models:
+    st.header("ML Verification Models & Longitudinal Drift")
+    
+    # Model config JSON status
+    status = get_training_status(selected_profile)
+    
+    col_m1, col_m2 = st.columns([1, 2])
+    with col_m1:
+        st.subheader("Model Status Metadata")
+        st.json(status)
+        
+    with col_m2:
+        st.subheader("Profile Drift Over Stored Sessions")
+        # Let's extract the actual keyboard statistics from the database sessions to draw an actual drift chart
+        profile_sess_sorted = profile_sessions.sort_values("collected_at").reset_index(drop=True)
+        if len(profile_sess_sorted) >= 2:
+            # We compute a real drift proxy: standard deviation deviation from first session
+            # using keyboard holds count and session duration
+            means = []
+            for idx, row in profile_sess_sorted.iterrows():
+                # Estimate a rhythm rate metric
+                rate = float(row.get("keyboard_events_count", 100)) / (float(row.get("duration_ms", 60000.0)) / 1000.0)
+                means.append(rate)
+            
+            # Map distance from centroid baseline (first session value)
+            dist_baseline = np.abs(np.array(means) - means[0])
+            
+            fig_drift = go.Figure()
+            fig_drift.add_trace(go.Scatter(x=profile_sess_sorted["collected_at"], y=dist_baseline,
+                                           mode="lines+markers", name="Keyboard Style Distance",
+                                           line=dict(color="#00C853", width=3)))
+            # Add alerts threshold
+            fig_drift.add_trace(go.Scatter(x=profile_sess_sorted["collected_at"], y=[0.8]*len(means),
+                                           mode="lines", name="Style Drift Warn Limit",
+                                           line=dict(color="#FFD600", dash="dash")))
+            fig_drift.add_trace(go.Scatter(x=profile_sess_sorted["collected_at"], y=[1.8]*len(means),
+                                           mode="lines", name="Staleness / Retrain Limit",
+                                           line=dict(color="#D50000", dash="dash")))
+            
+            fig_drift.update_layout(title="Rhythm rate deviation from baseline over time",
+                                    xaxis_title="Session Timestamp", yaxis_title="Style Deviation score",
+                                    template="plotly_dark")
+            st.plotly_chart(fig_drift, use_container_width=True)
+        else:
+            # Draw standard simulator if only one session exists
+            t = np.arange(1, 30)
+            drift = 0.5 + 0.1 * np.sin(t / 2.0) + 0.01 * t
+            fig_drift = go.Figure()
+            fig_drift.add_trace(go.Scatter(x=t, y=drift, mode='lines+markers', name='Distance from Centroid', line=dict(color='#00C853')))
+            fig_drift.add_trace(go.Scatter(x=t, y=[1.2]*29, mode='lines', name='Warn Limit', line=dict(color='#FFD600', dash='dash')))
+            fig_drift.add_trace(go.Scatter(x=t, y=[1.8]*29, mode='lines', name='Retrain Limit', line=dict(color='#D50000', dash='dash')))
+            fig_drift.update_layout(title="Simulated style deviation over 30 days (profile needs at least 2 sessions to compute actual drift)",
+                                    xaxis_title="Session Index", yaxis_title="Style Deviation score", template="plotly_dark")
+            st.plotly_chart(fig_drift, use_container_width=True)
+
+# ------------------------------------------------------------------ #
+# TAB 6: BIOMETRIC CLUSTER SPACE
 # ------------------------------------------------------------------ #
 with tab_clusters:
-    st.header("Biometric Fingerprint Space Visualization")
+    st.header("Behavioral Biometric Projection")
     st.markdown("""
-    This PCA projection shows how keyboard rhythm aggregate features cluster users.
-    Each dot represents a 50-keystroke aggregate window. Distinct clusters indicate unique timing signatures.
+    PCA projection of keyboard aggregates across all enrolled candidates.
+    Distinct grouping confirms that typing rhythms represent unique behavioral profiles.
     """)
 
     all_features = []
@@ -310,11 +517,8 @@ with tab_clusters:
         st.warning("Not enough aggregate windows across enrolled profiles to run Principal Component Analysis (PCA). Keep typing in the client!")
     else:
         X = np.stack(all_features)
-        
-        # Standardize features before running PCA
         X_scaled = StandardScaler().fit_transform(X)
         
-        # PCA projection to 2D
         pca = PCA(n_components=2)
         X_pca = pca.fit_transform(X_scaled)
         
@@ -323,8 +527,8 @@ with tab_clusters:
         
         fig = px.scatter(df_pca, x="Principal Component 1", y="Principal Component 2", 
                          color="Subject ID", 
-                         title="PCA Behavioral Biometrics Projection (Keyboard Dynamics)",
-                         labels={"Principal Component 1": "PC1 (Rhythm Speed / Variance)", "Principal Component 2": "PC2 (Digraph Patterns)"},
-                         color_discrete_sequence=px.colors.qualitative.Bold)
+                         title="PCA rhythm space grouping",
+                         labels={"Principal Component 1": "PC1 (Rhythm Speed)", "Principal Component 2": "PC2 (Digraph Variance)"},
+                         color_discrete_sequence=px.colors.qualitative.Bold, template="plotly_dark")
         fig.update_traces(marker=dict(size=8, opacity=0.8))
         st.plotly_chart(fig, use_container_width=True)
